@@ -1,0 +1,92 @@
+<svg width="100%" viewBox="0 0 680 340" role="img" style="" xmlns="http://www.w3.org/2000/svg">
+  <title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Argus 보안 로고 — 북두칠성 버전</title>
+  <desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">북두칠성 별자리와 눈 심볼이 결합된 파란 계열의 Argus 보안 로고</desc>
+
+  
+
+  <g transform="translate(340, 148)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+
+    <!-- 외곽 원형 프레임 -->
+    <circle cx="0" cy="0" r="90" fill="none" stroke="#185FA5" stroke-width="0.5" opacity="0.3" style="fill:none;stroke:rgb(24, 95, 165);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.3;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <circle cx="0" cy="0" r="78" fill="none" stroke="#185FA5" stroke-width="0.5" opacity="0.2" style="fill:none;stroke:rgb(24, 95, 165);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.2;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 배경 원 (채움) -->
+    <circle cx="0" cy="0" r="74" fill="#042C53" opacity="0.06" style="fill:rgb(4, 44, 83);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.06;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 북두칠성 별자리 (국자 모양) -->
+    <!-- 국자 바닥 4개 별 -->
+    <g opacity="0.9" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.9;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
+      <!-- 별 1 (국자 바닥 왼쪽 아래) -->
+      <circle cx="-44" cy="28" r="3" fill="#378ADD" style="fill:rgb(55, 138, 221);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <!-- 별 2 (국자 바닥 오른쪽 아래) -->
+      <circle cx="-14" cy="32" r="3" fill="#378ADD" style="fill:rgb(55, 138, 221);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <!-- 별 3 (국자 바닥 오른쪽 위) -->
+      <circle cx="-10" cy="8" r="3" fill="#378ADD" style="fill:rgb(55, 138, 221);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <!-- 별 4 (국자 바닥 왼쪽 위) -->
+      <circle cx="-40" cy="4" r="3.5" fill="#85B7EB" style="fill:rgb(133, 183, 235);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+      <!-- 국자 손잡이 3개 별 -->
+      <!-- 별 5 -->
+      <circle cx="14" cy="-18" r="3" fill="#378ADD" style="fill:rgb(55, 138, 221);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <!-- 별 6 -->
+      <circle cx="38" cy="-34" r="3" fill="#378ADD" style="fill:rgb(55, 138, 221);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <!-- 별 7 (끝) -->
+      <circle cx="54" cy="-52" r="3.5" fill="#85B7EB" style="fill:rgb(133, 183, 235);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+      <!-- 별자리 연결선 -->
+      <polyline points="-44,28 -14,32 -10,8 -40,4 -44,28" fill="none" stroke="#378ADD" stroke-width="0.8" opacity="0.5" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="-10" y1="8" x2="14" y2="-18" stroke="#378ADD" stroke-width="0.8" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="14" y1="-18" x2="38" y2="-34" stroke="#378ADD" stroke-width="0.8" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="38" y1="-34" x2="54" y2="-52" stroke="#378ADD" stroke-width="0.8" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+      <!-- 별 반짝임 (큰 별 2개) -->
+      <line x1="-40" y1="0" x2="-40" y2="8" stroke="#85B7EB" stroke-width="0.8" opacity="0.6" style="fill:rgb(0, 0, 0);stroke:rgb(133, 183, 235);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="-44" y1="4" x2="-36" y2="4" stroke="#85B7EB" stroke-width="0.8" opacity="0.6" style="fill:rgb(0, 0, 0);stroke:rgb(133, 183, 235);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="54" y1="-56" x2="54" y2="-48" stroke="#85B7EB" stroke-width="0.8" opacity="0.6" style="fill:rgb(0, 0, 0);stroke:rgb(133, 183, 235);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+      <line x1="50" y1="-52" x2="58" y2="-52" stroke="#85B7EB" stroke-width="0.8" opacity="0.6" style="fill:rgb(0, 0, 0);stroke:rgb(133, 183, 235);color:rgb(0, 0, 0);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    </g>
+
+    <!-- 눈 심볼 (중앙) -->
+    <!-- 눈 외곽 (아몬드) -->
+    <ellipse cx="0" cy="0" rx="38" ry="20" fill="#185FA5" style="fill:rgb(24, 95, 165);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <ellipse cx="0" cy="0" rx="30" ry="15" fill="#E6F1FB" style="fill:rgb(230, 241, 251);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 홍채 -->
+    <circle cx="0" cy="0" r="11" fill="#185FA5" style="fill:rgb(24, 95, 165);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <!-- 홍채 디테일 링 -->
+    <circle cx="0" cy="0" r="8" fill="none" stroke="#378ADD" stroke-width="1" opacity="0.6" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <!-- 동공 -->
+    <circle cx="0" cy="0" r="5" fill="#042C53" style="fill:rgb(4, 44, 83);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <!-- 하이라이트 -->
+    <circle cx="-3" cy="-3" r="2" fill="white" opacity="0.7" style="fill:rgb(255, 255, 255);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.7;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 눈 위아래 속눈썹 라인 -->
+    <path d="M-38,0 Q0,-28 38,0" fill="none" stroke="#185FA5" stroke-width="1" opacity="0.3" style="fill:none;stroke:rgb(24, 95, 165);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.3;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <path d="M-38,0 Q0,28 38,0" fill="none" stroke="#185FA5" stroke-width="1" opacity="0.3" style="fill:none;stroke:rgb(24, 95, 165);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.3;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 타겟 크로스헤어 -->
+    <circle cx="0" cy="0" r="52" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-dasharray="3 4" opacity="0.4" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-dasharray:3px, 4px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.4;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <line x1="-58" y1="0" x2="-46" y2="0" stroke="#378ADD" stroke-width="1" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <line x1="46" y1="0" x2="58" y2="0" stroke="#378ADD" stroke-width="1" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <line x1="0" y1="-58" x2="0" y2="-46" stroke="#378ADD" stroke-width="1" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <line x1="0" y1="46" x2="0" y2="58" stroke="#378ADD" stroke-width="1" opacity="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.5;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+    <!-- 코너 브래킷 -->
+    <path d="M-72,-62 L-72,-78 L-58,-78" fill="none" stroke="#378ADD" stroke-width="1.5" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <path d="M72,-62 L72,-78 L58,-78" fill="none" stroke="#378ADD" stroke-width="1.5" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <path d="M-72,62 L-72,78 L-58,78" fill="none" stroke="#378ADD" stroke-width="1.5" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+    <path d="M72,62 L72,78 L58,78" fill="none" stroke="#378ADD" stroke-width="1.5" style="fill:none;stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:1.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  </g>
+
+  <!-- ARGUS 워드마크 -->
+  <text x="340" y="272" text-anchor="middle" font-size="26" font-weight="500" letter-spacing="10" font-family="sans-serif" style="fill:rgb(12, 68, 124);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:26px;font-weight:500;text-anchor:middle;dominant-baseline:auto">ARGUS</text>
+
+  <!-- 구분선 -->
+  <line x1="232" y1="282" x2="296" y2="282" stroke="#378ADD" stroke-width="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <line x1="384" y1="282" x2="448" y2="282" stroke="#378ADD" stroke-width="0.5" style="fill:rgb(0, 0, 0);stroke:rgb(55, 138, 221);color:rgb(0, 0, 0);stroke-width:0.5px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <!-- 태그라인 -->
+  <text x="340" y="300" text-anchor="middle" font-size="10" letter-spacing="3" font-family="sans-serif" style="fill:rgb(115, 114, 108);stroke:none;color:rgb(0, 0, 0);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:sans-serif;font-size:10px;font-weight:400;text-anchor:middle;dominant-baseline:auto">SECURITY PLATFORM · 북두칠성</text>
+
+</svg>
