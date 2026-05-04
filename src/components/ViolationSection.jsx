@@ -56,6 +56,13 @@ function calcZoneDist(list) {
     .sort((a, b) => b.count - a.count);
 }
 
+function formatDetectedAt(dt) {
+  if (!dt) return "-";
+  const d = new Date(dt);
+  if (isNaN(d.getTime())) return dt;
+  return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
 export default function ViolationSection({ violations, activeFilter = "전체" }) {
   /* activeFilter에 따라 데이터 필터링
    * - "전체"인 경우 모든 데이터를 보여주고, "fixed" 또는 "variable"인 경우 해당 데이터만 보여줌 
@@ -144,7 +151,7 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
                     {v.invariant_source === "fixed" ? "고정" : "가변"}
                   </span>
                 </td>
-                <td style={td}>{v.detected_at.slice(11, 19)}</td>
+                <td style={td}>{formatDetectedAt(v.detected_at)}</td>
               </tr>
             ))}
           </tbody>

@@ -8,7 +8,7 @@
  */
 
 import { useState } from "react";
-import { invariants } from "../data/invariantsData";
+import { invariants as localInvariants } from "../data/invariantsData";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
 
 const SOURCE_TABS = [
@@ -54,7 +54,8 @@ function ViolationRateBar({ label, violated, total }) {
   );
 }
 
-export default function InvariantSection() {
+export default function InvariantSection({ invariants: propInvariants }) {
+  const invariants = propInvariants ?? localInvariants;
   const [sourceTab, setSourceTab] = useState("전체");
   const [statusTab, setStatusTab] = useState("전체");
 

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import KpiCards from "../components/KpiCards";
 import ViolationSection from "../components/ViolationSection";
 import AttackSection from "../components/AttackSection";
@@ -45,33 +46,44 @@ function scoreColor(score) {
 
 export default function Dashboard() {
   /* 대시보드가 관리하는 상태들 */
-  const [activeNav, setActiveNav]               = useState("vuln");        // 현재 선택된 네비게이션 메뉴 (기본값은 "취약점 발견 현황")
-  const [activeFilter, setActiveFilter]         = useState("전체");        // 현재 선택된 필터 (기본값은 "전체")
-  const [scanListData, setScanListData]         = useState([]);             // 전체 스캔 목록 (집계 지표 포함)
-  const [selectedScanId, setSelectedScanId]     = useState(null);           // 현재 선택된 스캔 ID
-  const [currentDetails, setCurrentDetails]     = useState(null);           // 선택된 스캔의 세부 데이터
-  const [loadingDetails, setLoadingDetails]     = useState(false);          // 세부 데이터 로딩 중 여부
-  const current = NAV_ITEMS.find((n) => n.id === activeNav); // 현재 네비게이션 메뉴에 해당하는 객체 (예: { id: "vuln", label: "취약점 발견 현황", ... })
+  const [activeNav, setActiveNav]           = useState("vuln");   // 현재 선택된 네비게이션 메뉴
+  const [activeFilter, setActiveFilter]     = useState("전체");   // 현재 선택된 필터
+  const [selectedScanId, setSelectedScanId] = useState(null);     // 현재 선택된 스캔 ID
+  const current = NAV_ITEMS.find((n) => n.id === activeNav);
 
-  // 스캔 목록 초기 로드 — 마운트 시 한 번만 실행, 최신 스캔을 기본 선택
-  useEffect(() => {
-    fetchScanList().then((list) => {
-      setScanListData(list);
-      const latestId = list[list.length - 1]?.scan_id;
-      if (latestId) setSelectedScanId(latestId);
-    });
-  }, []);
+  // 스캔 목록 조회 — React Query가 캐싱·재시도를 자동으로 처리
+  const {
+    data: scanListData = [],
+    isLoading: loadingList,
+    error: listError,
+  } = useQuery({
+    queryKey: ["scans"],
+    queryFn: fetchScanList,
+  });
 
-  // 선택된 스캔의 세부 데이터 로드 — selectedScanId 변경 시마다 실행
-  // 백엔드 연동 후에는 fetchScanDetails 내부만 교체하면 됨
+  // 스캔 목록이 로드되면 scanned_at 기준으로 가장 최신 스캔을 자동 선택
+  // 배열 마지막 항목이 아닌 날짜 정렬로 선택 — 백엔드 응답 순서에 무관하게 동작
   useEffect(() => {
-    if (!selectedScanId) return;
-    setLoadingDetails(true);
-    fetchScanDetails(selectedScanId).then((details) => {
-      setCurrentDetails(details);
-      setLoadingDetails(false);
-    });
-  }, [selectedScanId]);
+    if (scanListData.length > 0 && !selectedScanId) {
+      const latest = [...scanListData].sort(
+        (a, b) => new Date(b.scanned_at) - new Date(a.scanned_at)
+      )[0];
+      if (latest) setSelectedScanId(latest.scan_id);
+    }
+  }, [scanListData, selectedScanId]);
+
+  // 선택된 스캔의 세부 데이터 조회 — selectedScanId가 있을 때만 실행
+  const {
+    data: currentDetails,
+    isLoading: loadingDetails,
+    error: detailsError,
+  } = useQuery({
+    queryKey: ["scan-details", selectedScanId],
+    queryFn: () => fetchScanDetails(selectedScanId),
+    enabled: !!selectedScanId,
+  });
+
+  const error = listError || detailsError;
 
   /* 네비게이션 메뉴 변경 핸들러 */
   const handleNavChange = (id) => {
@@ -114,7 +126,11 @@ export default function Dashboard() {
           <p style={{ fontSize: 10, fontWeight: 500, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 6px" }}>
             현재 스캔
           </p>
-          {selectedScan ? (
+          {loadingList ? (
+            <p style={{ fontSize: 10, color: "#73726c", margin: 0 }}>로딩 중...</p>
+          ) : listError ? (
+            <p style={{ fontSize: 10, color: "#E05A5A", margin: 0 }}>불러오기 실패</p>
+          ) : selectedScan ? (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#1D9E75", display: "inline-block", flexShrink: 0 }} />
@@ -130,9 +146,7 @@ export default function Dashboard() {
                 <span style={{ color: "#73726c" }}> · {selectedScan.metrics.total_violations}건</span>
               </p>
             </>
-          ) : (
-            <p style={{ fontSize: 10, color: "#73726c", margin: 0 }}>로딩 중...</p>
-          )}
+          ) : null}
         </div>
 
         {/* 네비게이션 */}
@@ -189,6 +203,17 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* API 오류 안내 */}
+        {error && (
+          <div style={{ background: "#FEF2F2", border: "0.5px solid #FECACA", borderRadius: 10, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "#991B1B", margin: "0 0 2px" }}>데이터를 불러오지 못했습니다</p>
+              <p style={{ fontSize: 11, color: "#B91C1C", margin: 0 }}>{error.message}</p>
+            </div>
+          </div>
+        )}
 
         {/* 세부 데이터 없음 안내 — SCAN-0042~0045처럼 더미 데이터가 없는 스캔 선택 시 표시 */}
         {!loadingDetails && selectedScan && !currentDetails && (
@@ -307,7 +332,7 @@ export default function Dashboard() {
 
             {current.sections.includes("invariant") && (
               <div style={{ marginBottom: 32 }}>
-                <InvariantSection />
+                <InvariantSection invariants={currentDetails?.invariants} />
               </div>
             )}
 
