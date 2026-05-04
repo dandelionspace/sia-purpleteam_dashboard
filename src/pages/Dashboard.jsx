@@ -331,7 +331,7 @@ export default function Dashboard() {
 
             {current.sections.includes("pentest") && (
               <div style={{ marginBottom: 32 }}>
-                <PentestSection pentestResults={pentestResults} />
+                <PentestSection pentestResults={pentestResults} scanId={selectedScanId} />
               </div>
             )}
 

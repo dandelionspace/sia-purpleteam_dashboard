@@ -32,3 +32,9 @@ export const triggerScan = () => {
   if (USE_MOCK) return Promise.resolve({ scan_id: null, status: "mock" });
   return api.post("/scans/trigger").then((r) => r.data);
 };
+
+// Red Team 결과 저장 — test_id 기준으로 upsert
+export const savePentestResult = (scanId, result) => {
+  if (USE_MOCK) return Promise.resolve({ status: "ok" });
+  return api.post(`/scans/${scanId}/pentest`, result).then((r) => r.data);
+};

@@ -202,30 +202,49 @@ def trigger_scan(background_tasks: BackgroundTasks):
     return {"scan_id": scan_id, "status": "running"}
 
 
-class PentestPhase(BaseModel):
-    phase:    str
-    success:  bool
-    detected: bool
-    method:   str
+class TargetAsset(BaseModel):
+    asset_type: str
+    asset_id:   str
 
 
-class PentestResult(BaseModel):
-    scenario_id: str
-    chain_id:    str
-    title:       str
-    result:      str   # success | partial | fail
-    phases:      list[PentestPhase]
+class Narrative(BaseModel):
+    attack_input_and_process: str = ""
+    observed_result:          str = ""
+    impact_assessment:        str = ""
+    evidence_description:     str = ""
+    additional_notes:         str = ""
 
 
-@app.put("/api/scans/{scan_id}/pentest", status_code=200)
-def update_pentest(scan_id: str, results: list[PentestResult]):
-    """모의침투 결과를 저장한다 (프론트의 PentestSection 수동 입력 반영)."""
+class RedTeamResult(BaseModel):
+    schema_version:     str = "argos-redteam-result-v3"
+    scenario_id:        str
+    test_id:            str
+    tester:             str
+    tested_at:          str
+    related_invariants: list[str]       = []
+    target_assets:      list[TargetAsset] = []
+    overall_verdict:    str             # reproduced | partially_reproduced | not_reproduced | in_progress
+    narrative:          Narrative
+
+
+@app.post("/api/scans/{scan_id}/pentest", status_code=200)
+def save_pentest_result(scan_id: str, result: RedTeamResult):
+    """Red Team 결과를 저장한다. test_id 기준으로 upsert."""
     detail = _load_scan_detail(scan_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"스캔을 찾을 수 없습니다: {scan_id}")
-    detail["pentestResults"] = [r.model_dump() for r in results]
+
+    results: list = detail.get("pentestResults", [])
+    result_dict   = result.model_dump()
+    idx = next((i for i, r in enumerate(results) if r.get("test_id") == result.test_id), None)
+    if idx is not None:
+        results[idx] = result_dict
+    else:
+        results.append(result_dict)
+
+    detail["pentestResults"] = results
     _save_scan_detail(scan_id, detail)
-    return {"status": "ok"}
+    return {"status": "ok", "test_id": result.test_id}
 
 
 @app.get("/api/health")

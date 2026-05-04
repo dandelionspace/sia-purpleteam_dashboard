@@ -219,54 +219,41 @@ export const mitreMapping = [
 
 export const pentestResults = [
   {
-    scenario_id: "PT-001", chain_id: "CHAIN-001",
-    title: "서명키 탈취 및 악성 OTA 배포", result: "success",
-    phases: [
-      { phase: "초기침투", success: true, detected: false, method: "익명 OTA 접근" },
-      { phase: "내부이동", success: true, detected: false, method: "DMZ-DB 직통" },
-      { phase: "권한상승", success: true, detected: true, method: "개발자 계정 탈취" },
-      { phase: "데이터탈취", success: true, detected: false, method: "서명키 추출" },
-    ],
+    schema_version: "argos-redteam-result-v3",
+    scenario_id: "SCN-001",
+    test_id: "RT-001",
+    tester: "redteam-01",
+    tested_at: "2025-06-12T15:30:00+09:00",
+    related_invariants: ["INV-STD-03", "INV-STD-08", "INV-ARG-08"],
+    target_assets: [{ asset_type: "ota_server", asset_id: "ASSET-001" }],
+    overall_verdict: "reproduced",
+    narrative: {
+      attack_input_and_process: "서명키 노출 시나리오를 기준으로 위조 JWT를 생성하고 OTA 배포 API(/api/v1/deploy)에 인증 없이 접근했다. 이후 악성 펌웨어 이미지를 서명하여 업로드 엔드포인트에 전송했다.",
+      observed_result: "인증 없이 OTA 엔드포인트 접근이 가능했고 펌웨어 업로드 API에서 HTTP 200 OK가 반환됐다. 악성 펌웨어가 정상 업데이트로 등록됨을 확인했다.",
+      impact_assessment: "악성 펌웨어 업로드가 가능함을 확인했으며 전체 디바이스 플릿에 배포 가능성 있음. 서명 검증 로직 부재로 인해 공급망 침해 시나리오 완전 재현 성공.",
+      evidence_description: "trace_id=trc-001, request_id=req-001, 캡처: dashboard://evidence/scn001-rt001.png, 로그: log-ota-001",
+      additional_notes: "서명 검증 로직 부재가 핵심 원인. HSM 도입 전까지 OTA 엔드포인트 IP 화이트리스트 적용 권고.",
+    },
   },
   {
-    scenario_id: "PT-002", chain_id: "CHAIN-002",
-    title: "고객 영상 데이터 무단 수집", result: "partial",
-    phases: [
-      { phase: "초기침투", success: true, detected: false, method: "웹캠 API 취약점" },
-      { phase: "내부이동", success: true, detected: true, method: "내부망 스캔" },
-      { phase: "권한상승", success: false, detected: true, method: "MFA 차단됨" },
-      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
+    schema_version: "argos-redteam-result-v3",
+    scenario_id: "SCN-002",
+    test_id: "RT-002",
+    tester: "redteam-01",
+    tested_at: "2025-06-12T16:10:00+09:00",
+    related_invariants: ["INV-STD-05", "INV-STD-07", "INV-ARG-01", "INV-ARG-03"],
+    target_assets: [
+      { asset_type: "customer_profile", asset_id: "user-10000002" },
+      { asset_type: "video_event", asset_id: "vid-00012" },
     ],
-  },
-  {
-    scenario_id: "PT-003", chain_id: "CHAIN-003",
-    title: "OTA 서버 랜섬웨어 투입", result: "success",
-    phases: [
-      { phase: "초기침투", success: true, detected: false, method: "스피어 피싱" },
-      { phase: "내부이동", success: true, detected: false, method: "내부망 횡이동" },
-      { phase: "권한상승", success: true, detected: false, method: "로컬 권한 상승" },
-      { phase: "데이터탈취", success: true, detected: false, method: "랜섬웨어 배포" },
-    ],
-  },
-  {
-    scenario_id: "PT-004", chain_id: "CHAIN-004",
-    title: "펌웨어 변조 후 디바이스 장악", result: "fail",
-    phases: [
-      { phase: "초기침투", success: true, detected: true, method: "스피어 피싱" },
-      { phase: "내부이동", success: false, detected: true, method: "세그멘테이션 차단" },
-      { phase: "권한상승", success: false, detected: false, method: "미도달" },
-      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
-    ],
-  },
-  {
-    scenario_id: "PT-005", chain_id: "CHAIN-005",
-    title: "DB 직접 접근 고객정보 탈취", result: "success",
-    phases: [
-      { phase: "초기침투", success: true, detected: false, method: "SQL 인젝션" },
-      { phase: "내부이동", success: true, detected: false, method: "DB 직접 접근" },
-      { phase: "권한상승", success: true, detected: false, method: "DB 계정 탈취" },
-      { phase: "데이터탈취", success: true, detected: false, method: "고객정보 덤프" },
-    ],
+    overall_verdict: "partially_reproduced",
+    narrative: {
+      attack_input_and_process: "과거 키로 위조 JWT를 생성하고 내부 API에 userId 파라미터를 변경하여 요청했다. deviceId 변경을 통한 영상 메타데이터 접근은 이번 테스트에서 미수행.",
+      observed_result: "userId 변경 요청에서 HTTP 200 OK가 반환되었고 응답에 타 고객의 이름, 이메일, 주소가 포함됐다. deviceId 변경 요청은 검증하지 않았다.",
+      impact_assessment: "타 고객 개인정보 조회 가능함을 확인했다. 영상 메타데이터 유출 여부는 추가 검증이 필요하므로 부분 재현으로 판정.",
+      evidence_description: "trace_id=trc-002, request_id=req-002, 관련 로그: log-api-001, log-api-002",
+      additional_notes: "deviceId 단계 추가 테스트 필요. 객체 소유권 검증 로직 미구현이 근본 원인.",
+    },
   },
 ];
 
