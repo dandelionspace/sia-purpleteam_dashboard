@@ -321,18 +321,24 @@ function TrendCharts({ assetHistory }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div style={card}>
-          <p style={cardTitle}>① 취약 자산 수 변화 <span style={chartNote}>공격 표면 확대 여부</span></p>
+          <p style={cardTitle}>① 취약 자산 수 변화 <span style={chartNote}>카테고리별 공격 표면 확대 여부</span></p>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={assetHistory} margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
               <CartesianGrid stroke="rgba(0,0,0,0.06)" />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#73726c" }} />
               <YAxis tick={{ fontSize: 10, fill: "#73726c" }} />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6, border: "0.5px solid rgba(0,0,0,0.1)" }} formatter={(v, n) => [v + "대", n]} />
-              <Line type="monotone" dataKey="vulnerable" name="취약" stroke="#185FA5" strokeWidth={2} dot={{ r: 3, fill: "#185FA5" }} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6, border: "0.5px solid rgba(0,0,0,0.1)" }} formatter={(v, n) => [v + "개", n]} />
+              <Line type="monotone" dataKey="vulnerable_hw"   name="하드웨어"  stroke="#0C447C" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="vulnerable_sw"   name="소프트웨어" stroke="#185FA5" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="vulnerable_cred" name="자격증명"  stroke="#378ADD" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 3" />
+              <Line type="monotone" dataKey="vulnerable_api"  name="API"       stroke="#85B7EB" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 3" />
             </LineChart>
           </ResponsiveContainer>
           <div style={legendRow}>
-            <LegendItem label="취약" color="#185FA5" />
+            <LegendItem label="하드웨어"  color="#0C447C" />
+            <LegendItem label="소프트웨어" color="#185FA5" />
+            <LegendItem label="자격증명"  color="#378ADD" dash="5 3" />
+            <LegendItem label="API"       color="#85B7EB" dash="5 3" />
           </div>
         </div>
 
@@ -342,16 +348,15 @@ function TrendCharts({ assetHistory }) {
             <LineChart data={assetHistory} margin={{ top: 5, right: 16, bottom: 5, left: 0 }}>
               <CartesianGrid stroke="rgba(0,0,0,0.06)" />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#73726c" }} />
-              <YAxis domain={[40, 100]} tick={{ fontSize: 10, fill: "#73726c" }} tickFormatter={(v) => `${v}%`} />
-              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6, border: "0.5px solid rgba(0,0,0,0.1)" }} formatter={(v) => [v + "%", "패치 적용률"]} />
-              <ReferenceLine y={80} stroke="#85B7EB" strokeDasharray="5 3" strokeWidth={1.5}
-                label={{ value: "목표 80%", position: "insideTopRight", fontSize: 9, fill: "#85B7EB", offset: 4 }} />
-              <Line type="monotone" dataKey="patch_pct" name="패치 적용률" stroke="#185FA5" strokeWidth={2} dot={{ r: 3, fill: "#185FA5" }} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#73726c" }} tickFormatter={(v) => `${v}%`} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6, border: "0.5px solid rgba(0,0,0,0.1)" }} formatter={(v, n) => [v + "%", n]} />
+              <Line type="monotone" dataKey="patch_pct_hw" name="하드웨어" stroke="#0C447C" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="patch_pct_sw" name="소프트웨어" stroke="#378ADD" strokeWidth={2} dot={{ r: 3 }} strokeDasharray="5 3" />
             </LineChart>
           </ResponsiveContainer>
           <div style={legendRow}>
-            <LegendItem label="패치 적용률" color="#185FA5" />
-            <LegendItem label="목표 80%" color="#85B7EB" dash="5 3" />
+            <LegendItem label="하드웨어"  color="#0C447C" />
+            <LegendItem label="소프트웨어" color="#378ADD" dash="5 3" />
           </div>
         </div>
       </div>
@@ -556,20 +561,36 @@ function SoftwareSection({ softwareAssets }) {
 // ── (3) Credential ────────────────────────────────────────────────────────────
 
 function CredentialSection({ credentialAssets }) {
-  // 90일 이내 만료 예정인 자격증명 계산
   const now  = new Date();
   const soon = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
-  const exposedCount  = credentialAssets.filter((c) => c.exposed).length;
-  const expiringCount = credentialAssets.filter((c) => c.expires_at && new Date(c.expires_at) <= soon).length;
-  const overPrivCount = credentialAssets.filter((c) => c.privilege === "과다" || c.privilege === "최고").length;
+  // 취약 자격증명: 보안 위험 조건 기반 계산 (만료임박 제외)
+  // 보관 방식(파일시스템/환경변수)은 MFA 여부 관계없이 독립적 위험
+  // MFA는 계정 탈취 위험 요소로 별도 판단 (privilege와 결합)
+  const isVuln = (c) =>
+    c.exposed ||
+    c.storage === "파일시스템" ||
+    c.storage === "환경변수" ||
+    ((c.privilege === "최고" || c.privilege === "과다") && !c.mfa) ||
+    (c.violation_ids ?? []).length > 0;
+
+  const vulnCount      = credentialAssets.filter(isVuln).length;
+  const exposedCount   = credentialAssets.filter((c) => c.exposed).length;
+  const storageCount   = credentialAssets.filter((c) => c.storage === "파일시스템" || c.storage === "환경변수").length;
+  const privMfaCount   = credentialAssets.filter((c) => (c.privilege === "최고" || c.privilege === "과다") && !c.mfa).length;
+  const violationCount = credentialAssets.filter((c) => (c.violation_ids ?? []).length > 0).length;
+  const expiringCount  = credentialAssets.filter((c) => c.expires_at && new Date(c.expires_at) <= soon).length;
+  const overPrivCount  = credentialAssets.filter((c) => c.privilege === "과다" || c.privilege === "최고").length;
+  const noMfaCount     = credentialAssets.filter((c) => !c.mfa).length;
 
   return (
     <div>
       <SecurityKPI kpis={[
-        { label: "노출된 키 / 계정", value: exposedCount,  color: "#0C447C", sub: "외부 노출 확인됨" },
-        { label: "만료 임박 (90일)", value: expiringCount, color: "#0C447C", sub: "즉시 갱신 필요" },
-        { label: "과도 권한",        value: overPrivCount, color: "#185FA5", sub: "최소 권한 원칙 위반" },
+        { label: "취약 자격증명",    value: vulnCount,     color: "#0C447C", sub: "외부 노출 · 불안전 보관 방식 · 과도 권한 + MFA 미적용 · 불변식 위반 연결" },
+        { label: "노출된 키 / 계정", value: exposedCount,  color: "#0C447C", sub: "외부 노출 확인됨",              detail: "즉시 교체 필요" },
+        { label: "만료 임박 (90일)", value: expiringCount, color: "#185FA5", sub: "인증서 · 토큰 갱신 필요",        detail: "서비스 중단 위험" },
+        { label: "과도 권한",        value: overPrivCount, color: "#185FA5", sub: "최소 권한 원칙 위반",            detail: "최고 · 과다 권한 합산" },
+        { label: "MFA 미적용",       value: noMfaCount,    color: "#378ADD", sub: "계정 탈취 시 즉시 침해 가능",     detail: "MFA 미설정 자격증명" },
       ]} />
 
       {/* 자격증명 목록 테이블 */}
@@ -655,26 +676,36 @@ const SCOPE_STYLE = {
 };
 
 function ApiSection({ apiAssets }) {
-  const exposedCount    = apiAssets.filter((a) => a.exposed).length;
-  const noAuthCount     = apiAssets.filter((a) => a.auth === "없음").length;
+  const isVulnApi = (a) =>
+    a.auth === "없음" ||
+    (a.exposed && !a.rate_limit) ||
+    (a.exposed && a.auth === "API Key") ||
+    (a.violation_ids ?? []).length > 0;
+
+  const vulnCount        = apiAssets.filter(isVulnApi).length;
+  const dangerCount      = apiAssets.filter((a) => a.status === "위험").length;
+  const vulnOnlyCount    = apiAssets.filter((a) => a.status === "취약").length;
+  const exposedCount     = apiAssets.filter((a) => a.exposed).length;
+  const noAuthCount      = apiAssets.filter((a) => a.auth === "없음").length;
   const noRateLimitCount = apiAssets.filter((a) => !a.rate_limit).length;
 
   return (
     <div>
       <SecurityKPI kpis={[
-        { label: "외부 노출 API",     value: exposedCount,     color: "#0C447C", sub: "인터넷 직접 노출" },
-        { label: "인증 없는 API",     value: noAuthCount,      color: "#0C447C", sub: "무인증 접근 가능" },
-        { label: "Rate Limit 미적용", value: noRateLimitCount, color: "#185FA5", sub: "DoS 공격 취약" },
+        { label: "취약 API",          value: vulnCount,        color: "#0C447C", sub: "인증 없음 · 외부 노출 + Rate Limit 미적용 · 외부 노출 + API Key 인증 · 불변식 위반 연결" },
+        { label: "외부 노출 API",     value: exposedCount,     color: "#0C447C", sub: "인터넷 직접 노출",   detail: "외부 접근 가능" },
+        { label: "인증 없는 API",     value: noAuthCount,      color: "#185FA5", sub: "무인증 접근 가능",   detail: "즉각 침해 위험" },
+        { label: "Rate Limit 미적용", value: noRateLimitCount, color: "#185FA5", sub: "DoS 공격 취약",      detail: "요청 제한 없음" },
       ]} />
 
       {/* API 목록 테이블 */}
       <div style={card}>
         <p style={cardTitle}>API 목록</p>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1000 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 900 }}>
             <thead>
               <tr>
-                {["ID", "이름", "유형", "엔드포인트", "인증", "범위", "Rate Limit", "연결 자산", "심각도", "감사일", "상태"].map((h) => (
+                {["ID", "이름", "유형", "엔드포인트", "인증", "범위", "Rate Limit", "연결 자산", "감사일"].map((h) => (
                   <th key={h} style={th}>{h}</th>
                 ))}
               </tr>
@@ -682,14 +713,12 @@ function ApiSection({ apiAssets }) {
             <tbody>
               {apiAssets.length === 0 ? (
                 <tr>
-                  <td colSpan={11} style={{ textAlign: "center", padding: "24px", color: "#b0b0b0", fontSize: 12 }}>
+                  <td colSpan={9} style={{ textAlign: "center", padding: "24px", color: "#b0b0b0", fontSize: 12 }}>
                     API 자산이 없습니다
                   </td>
                 </tr>
               ) : apiAssets.map((a) => {
-                const ss  = STATUS_STYLE[a.status] || {};
-                const sv  = SEV_STYLE[a.severity]  || {};
-                const sc  = SCOPE_STYLE[a.scope]    || {};
+                const sc = SCOPE_STYLE[a.scope] || {};
                 return (
                   <tr key={a.id}>
                     <td style={td}><span style={{ fontWeight: 500, color: "#185FA5" }}>{a.id}</span></td>
@@ -718,17 +747,7 @@ function ApiSection({ apiAssets }) {
                         : <span style={{ color: "#E57373", fontWeight: 700 }}>✗</span>}
                     </td>
                     <td style={{ ...td, fontSize: 11, color: "#73726c" }}>{a.linked_asset ?? "—"}</td>
-                    <td style={td}>
-                      {a.severity
-                        ? <span style={{ fontSize: 10, fontWeight: 500, background: sv.bg, color: sv.text, padding: "2px 6px", borderRadius: 99 }}>{a.severity}</span>
-                        : <span style={{ color: "#c0c0c0" }}>—</span>}
-                    </td>
                     <td style={{ ...td, fontSize: 11, color: "#73726c" }}>{a.last_audited}</td>
-                    <td style={td}>
-                      <span style={{ fontSize: 10, fontWeight: 500, background: ss.bg, color: ss.text, padding: "2px 6px", borderRadius: 99 }}>
-                        {a.status}
-                      </span>
-                    </td>
                   </tr>
                 );
               })}
@@ -995,7 +1014,7 @@ export default function AssetSection({ assets, assetHistory, assetEvents, assetP
         ))}
       </div>
 
-      {/* 전체 탭: 카테고리 요약 + 정책 위반 + 탐지 이벤트 */}
+      {/* 전체 탭: 카테고리 요약 + 추이 차트 + 전체 자산 목록 */}
       {activeCategory === "전체" && (
         <>
           <SubLabel>카테고리별 현황</SubLabel>
@@ -1006,6 +1025,7 @@ export default function AssetSection({ assets, assetHistory, assetEvents, assetP
             apiAssets={safeApi}
             onCategoryClick={setActiveCategory}
           />
+          <TrendCharts assetHistory={safeHistory} />
           <SubLabel>전체 자산</SubLabel>
           <AssetOverviewTable
             assets={enrichedAssets}
@@ -1032,7 +1052,6 @@ export default function AssetSection({ assets, assetHistory, assetEvents, assetP
             { label: "백신 미설치",      color: "#185FA5", sub: "악성코드 무방비",               detail: "서버 · PC 대상",                                                                                                                                          value: enrichedAssets.filter((a) => !a.av  && (a.type === "서버" || a.type === "PC")).length },
             { label: "미관리 자산",      color: "#73726c", sub: "Shadow IT 위험",                detail: "인벤토리 미등록",                                                                                                                                         value: enrichedAssets.filter((a) => !a.managed).length },
           ]} />
-          <TrendCharts assetHistory={safeHistory} />
           <SubLabel> 하드웨어 자산 목록</SubLabel>
           <AssetList assets={enrichedAssets} />
         </>

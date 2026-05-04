@@ -315,14 +315,16 @@ export const assets = [
   { id: "ASSET-020", name: "vpn-gateway",     type: "네트워크 장비", segment: "내부망", zone: "관리", ip: "10.0.0.1",       os: "Cisco IOS 17",   os_age: 4, online_status: "오프라인", cvss_max: null, patch_status: "미적용",  edr: false, av: false, managed: false, exposed: true,  privilege: "정상", violation_ids: [],                     last_seen: "2025-06-11T18:00:00Z" },
 ];
 
-// patch_pct: 패치 적용률(%), unregistered: 비인가/미등록 자산 수, new_assets: 당월 신규 등록 수
+// patch_pct_hw: 하드웨어 패치 적용률(%), patch_pct_sw: 소프트웨어 패치 적용률(%)
+// unregistered: 비인가/미등록 자산 수, new_assets: 당월 신규 등록 수
+// vulnerable_hw/sw/cred/api: 카테고리별 취약 자산 수
 export const assetHistory = [
-  { date: "01월", total: 42, vulnerable: 7,  offline: 1, patch_pct: 71, unregistered: 3, new_assets: 0, policy_violations: 8  },
-  { date: "02월", total: 44, vulnerable: 8,  offline: 1, patch_pct: 68, unregistered: 4, new_assets: 2, policy_violations: 9  },
-  { date: "03월", total: 44, vulnerable: 9,  offline: 1, patch_pct: 65, unregistered: 4, new_assets: 0, policy_violations: 10 },
-  { date: "04월", total: 46, vulnerable: 9,  offline: 1, patch_pct: 63, unregistered: 5, new_assets: 2, policy_violations: 12 },
-  { date: "05월", total: 47, vulnerable: 10, offline: 2, patch_pct: 60, unregistered: 6, new_assets: 1, policy_violations: 14 },
-  { date: "06월", total: 48, vulnerable: 11, offline: 2, patch_pct: 56, unregistered: 7, new_assets: 1, policy_violations: 16 },
+  { date: "01월", total: 42, vulnerable: 7,  vulnerable_hw: 7,  vulnerable_sw: 3, vulnerable_cred: 2, vulnerable_api: 1, offline: 1, patch_pct: 71, patch_pct_hw: 71, patch_pct_sw: 50, unregistered: 3, new_assets: 0, policy_violations: 8  },
+  { date: "02월", total: 44, vulnerable: 8,  vulnerable_hw: 8,  vulnerable_sw: 3, vulnerable_cred: 2, vulnerable_api: 1, offline: 1, patch_pct: 68, patch_pct_hw: 68, patch_pct_sw: 45, unregistered: 4, new_assets: 2, policy_violations: 9  },
+  { date: "03월", total: 44, vulnerable: 9,  vulnerable_hw: 9,  vulnerable_sw: 4, vulnerable_cred: 3, vulnerable_api: 1, offline: 1, patch_pct: 65, patch_pct_hw: 65, patch_pct_sw: 40, unregistered: 4, new_assets: 0, policy_violations: 10 },
+  { date: "04월", total: 46, vulnerable: 9,  vulnerable_hw: 9,  vulnerable_sw: 5, vulnerable_cred: 3, vulnerable_api: 2, offline: 1, patch_pct: 63, patch_pct_hw: 63, patch_pct_sw: 38, unregistered: 5, new_assets: 2, policy_violations: 12 },
+  { date: "05월", total: 47, vulnerable: 10, vulnerable_hw: 10, vulnerable_sw: 5, vulnerable_cred: 3, vulnerable_api: 2, offline: 2, patch_pct: 60, patch_pct_hw: 60, patch_pct_sw: 33, unregistered: 6, new_assets: 1, policy_violations: 14 },
+  { date: "06월", total: 48, vulnerable: 11, vulnerable_hw: 11, vulnerable_sw: 6, vulnerable_cred: 3, vulnerable_api: 2, offline: 2, patch_pct: 56, patch_pct_hw: 56, patch_pct_sw: 25, unregistered: 7, new_assets: 1, policy_violations: 16 },
 ];
 
 export const assetEvents = [
@@ -369,28 +371,183 @@ export const softwareAssets = [
 // storage: HSM | 파일시스템 | 환경변수 | DB
 // privilege: 최고 | 과다 | 정상
 // status: 위험 | 취약 | 만료임박 | 정상
+// severity 기준: exposed → Critical
+//               파일시스템 저장 → High (MFA 무관, 파일 읽기만으로 탈취 가능)
+//               과다/최고권한 + MFA없음 → High (계정 탈취 시 광범위한 피해)
+//               환경변수 저장 → Medium (MFA 무관, 로그·프로세스 검사로 노출)
+//               violation 연결 → Medium 이상 / HSM + MFA → null
 export const credentialAssets = [
-  { id: "CRED-001", name: "OTA 서명키 (RSA-4096)",       type: "서명키",   owner: "배포팀",  storage: "파일시스템", mfa: false, last_rotated: "2024-01-15", expires_at: null,         exposed: true,  privilege: "최고", severity: "Critical", online_status: "온라인",    violation_ids: ["INV-031"] },
-  { id: "CRED-002", name: "블랙박스 디바이스 인증서",     type: "인증서",   owner: "DevOps",  storage: "HSM",       mfa: true,  last_rotated: "2025-03-01", expires_at: "2025-09-01", exposed: false, privilege: "정상", severity: "High",     status: "만료임박", violation_ids: ["INV-061"] },
-  { id: "CRED-003", name: "인프라 관리자 계정",           type: "계정",     owner: "인프라팀", storage: "-",         mfa: false, last_rotated: "2023-11-20", expires_at: null,         exposed: false, privilege: "과다", severity: "Critical", online_status: "온라인",    violation_ids: ["INV-031"] },
+  // CRED-001: exposed:true → Critical / status: 위험
+  { id: "CRED-001", name: "OTA 서명키 (RSA-4096)",       type: "서명키",   owner: "배포팀",  storage: "파일시스템", mfa: false, last_rotated: "2024-01-15", expires_at: null,         exposed: true,  privilege: "최고", severity: "Critical", status: "위험",    violation_ids: ["INV-031"] },
+  // CRED-002: HSM+MFA+정상 → null이나 violation 연결로 Medium / status: 만료임박
+  { id: "CRED-002", name: "블랙박스 디바이스 인증서",     type: "인증서",   owner: "DevOps",  storage: "HSM",       mfa: true,  last_rotated: "2025-03-01", expires_at: "2025-09-01", exposed: false, privilege: "정상", severity: "Medium",   status: "만료임박", violation_ids: ["INV-061"] },
+  // CRED-003: 과다권한+MFA없음 → High / status: 취약
+  { id: "CRED-003", name: "인프라 관리자 계정",           type: "계정",     owner: "인프라팀", storage: "-",         mfa: false, last_rotated: "2023-11-20", expires_at: null,         exposed: false, privilege: "과다", severity: "High",     status: "취약",    violation_ids: ["INV-031"] },
+  // CRED-004: 환경변수+MFA없음 → Medium / status: 만료임박
   { id: "CRED-004", name: "드론 협력사 API 토큰",         type: "API 토큰", owner: "연동팀",  storage: "환경변수",  mfa: false, last_rotated: "2025-01-10", expires_at: "2025-07-10", exposed: false, privilege: "정상", severity: "Medium",   status: "만료임박", violation_ids: ["INV-V010"] },
-  { id: "CRED-005", name: "DB 마스터 계정",               type: "계정",     owner: "DBA",     storage: "-",         mfa: false, last_rotated: "2024-08-01", expires_at: null,         exposed: false, privilege: "과다", severity: "High",     online_status: "온라인",    violation_ids: ["INV-042"] },
-  { id: "CRED-006", name: "자동차 협력사 API 토큰",       type: "API 토큰", owner: "연동팀",  storage: "환경변수",  mfa: false, last_rotated: "2025-02-20", expires_at: "2025-08-20", exposed: false, privilege: "정상", severity: null,       online_status: "온라인",    violation_ids: [] },
-  { id: "CRED-007", name: "웹캠 디바이스 루트 인증서",    type: "인증서",   owner: "보안팀",  storage: "HSM",       mfa: true,  last_rotated: "2025-05-01", expires_at: "2026-05-01", exposed: false, privilege: "정상", severity: null,       online_status: "온라인",    violation_ids: [] },
-  { id: "CRED-008", name: "CI/CD 배포 키",               type: "서명키",   owner: "개발팀",  storage: "파일시스템", mfa: false, last_rotated: "2024-12-01", expires_at: null,         exposed: false, privilege: "과다", severity: "Medium",   online_status: "온라인",    violation_ids: [] },
+  // CRED-005: 과다권한+MFA없음 → High / status: 취약
+  { id: "CRED-005", name: "DB 마스터 계정",               type: "계정",     owner: "DBA",     storage: "-",         mfa: false, last_rotated: "2024-08-01", expires_at: null,         exposed: false, privilege: "과다", severity: "High",     status: "취약",    violation_ids: ["INV-042"] },
+  // CRED-006: 환경변수+MFA없음 → Medium / status: 만료임박
+  { id: "CRED-006", name: "자동차 협력사 API 토큰",       type: "API 토큰", owner: "연동팀",  storage: "환경변수",  mfa: false, last_rotated: "2025-02-20", expires_at: "2025-08-20", exposed: false, privilege: "정상", severity: "Medium",   status: "만료임박", violation_ids: [] },
+  // CRED-007: HSM+MFA+정상권한 → null / status: 정상
+  { id: "CRED-007", name: "웹캠 디바이스 루트 인증서",    type: "인증서",   owner: "보안팀",  storage: "HSM",       mfa: true,  last_rotated: "2025-05-01", expires_at: "2026-05-01", exposed: false, privilege: "정상", severity: null,       status: "정상",    violation_ids: [] },
+  // CRED-008: 파일시스템+MFA없음+과다권한 → High / status: 취약
+  { id: "CRED-008", name: "CI/CD 배포 키",               type: "서명키",   owner: "개발팀",  storage: "파일시스템", mfa: false, last_rotated: "2024-12-01", expires_at: null,         exposed: false, privilege: "과다", severity: "High",     status: "취약",    violation_ids: [] },
+];
+
+// ── SCAN-0046 세부 데이터 (이전 스캔 — 일부 취약점이 아직 미조치 상태) ──────
+const violations_0046 = [
+  { id: "INV-031", severity: "Critical", description: "서명키 무단 접근 — 개발자 계정", server_zone: "개발", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:21:03Z", invariant_source: "fixed" },
+  { id: "INV-018", severity: "Critical", description: "OTA 배포서버 익명 접근 허용", server_zone: "배포", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:21:09Z", invariant_source: "fixed" },
+  { id: "INV-042", severity: "High", description: "DMZ→DB 직접 통신 허용", server_zone: "DMZ", type: "네트워크", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 7, detected_at: "2025-05-15T11:21:15Z", invariant_source: "fixed" },
+  { id: "INV-007", severity: "High", description: "펌웨어 업데이트 서명 검증 누락", server_zone: "배포", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1195", weight: 7, detected_at: "2025-05-15T11:21:22Z", invariant_source: "variable" },
+  { id: "INV-055", severity: "Medium", description: "고객 영상 데이터 암호화 미적용", server_zone: "DB", type: "보안정책", attack_phase: "데이터탈취", mitre_tactic: "TA0010", mitre_technique: "T1048", weight: 4, detected_at: "2025-05-15T11:21:31Z", invariant_source: "variable" },
+  { id: "INV-012", severity: "Medium", description: "관리자 페이지 IP 제한 미설정", server_zone: "운영", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1190", weight: 4, detected_at: "2025-05-15T11:21:45Z", invariant_source: "fixed" },
+  { id: "INV-029", severity: "Medium", description: "SSH 기본 포트 사용", server_zone: "관리", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1110", weight: 4, detected_at: "2025-05-15T11:22:01Z", invariant_source: "fixed" },
+  { id: "INV-038", severity: "Low", description: "로그 보관 기간 30일 미만", server_zone: "백업", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0005", mitre_technique: "T1070", weight: 1, detected_at: "2025-05-15T11:22:15Z", invariant_source: "variable" },
+  { id: "INV-044", severity: "Low", description: "개발 서버 불필요한 포트 오픈", server_zone: "개발", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1046", weight: 1, detected_at: "2025-05-15T11:22:30Z", invariant_source: "variable" },
+  { id: "INV-061", severity: "High", description: "디바이스 인증서 만료 검증 누락", server_zone: "운영", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1134", weight: 7, detected_at: "2025-05-15T11:22:45Z", invariant_source: "fixed" },
+  // SCAN-0047에서 조치 완료된 취약점들
+  { id: "INV-073", severity: "Critical", description: "개발 서버 SSH 루트 로그인 허용", server_zone: "개발", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:23:00Z", invariant_source: "fixed" },
+  { id: "INV-074", severity: "High", description: "방화벽 정책 과도한 Any-Any 규칙 존재", server_zone: "DMZ", type: "네트워크", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 7, detected_at: "2025-05-15T11:23:15Z", invariant_source: "fixed" },
+  { id: "INV-075", severity: "Medium", description: "로그인 실패 임계값 미설정", server_zone: "운영", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1110", weight: 4, detected_at: "2025-05-15T11:23:30Z", invariant_source: "variable" },
+  { id: "INV-076", severity: "Low", description: "미사용 서비스 포트 노출 (TCP 8080)", server_zone: "배포", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1046", weight: 1, detected_at: "2025-05-15T11:23:45Z", invariant_source: "variable" },
+  { id: "INV-077", severity: "Low", description: "세션 타임아웃 미설정 (관리자 콘솔)", server_zone: "운영", type: "보안정책", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 1, detected_at: "2025-05-15T11:24:00Z", invariant_source: "variable" },
+];
+
+const pentestResults_0046 = [
+  {
+    scenario_id: "PT-001", chain_id: "CHAIN-001",
+    title: "서명키 탈취 및 악성 OTA 배포", result: "partial",
+    phases: [
+      { phase: "초기침투", success: true,  detected: false, method: "익명 OTA 접근" },
+      { phase: "내부이동", success: true,  detected: true,  method: "DMZ-DB 직통 (일부 차단)" },
+      { phase: "권한상승", success: false, detected: true,  method: "SSH 루트 차단됨" },
+      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
+    ],
+  },
+  {
+    scenario_id: "PT-002", chain_id: "CHAIN-002",
+    title: "고객 영상 데이터 무단 수집", result: "partial",
+    phases: [
+      { phase: "초기침투", success: true,  detected: false, method: "웹캠 API 취약점" },
+      { phase: "내부이동", success: true,  detected: true,  method: "내부망 스캔" },
+      { phase: "권한상승", success: false, detected: true,  method: "MFA 차단됨" },
+      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
+    ],
+  },
+  {
+    scenario_id: "PT-003", chain_id: "CHAIN-003",
+    title: "OTA 서버 랜섬웨어 투입", result: "success",
+    phases: [
+      { phase: "초기침투", success: true, detected: false, method: "스피어 피싱" },
+      { phase: "내부이동", success: true, detected: false, method: "내부망 횡이동" },
+      { phase: "권한상승", success: true, detected: false, method: "로컬 권한 상승" },
+      { phase: "데이터탈취", success: true, detected: false, method: "랜섬웨어 배포" },
+    ],
+  },
+  {
+    scenario_id: "PT-004", chain_id: "CHAIN-004",
+    title: "펌웨어 변조 후 디바이스 장악", result: "fail",
+    phases: [
+      { phase: "초기침투", success: true,  detected: true,  method: "스피어 피싱" },
+      { phase: "내부이동", success: false, detected: true,  method: "세그멘테이션 차단" },
+      { phase: "권한상승", success: false, detected: false, method: "미도달" },
+      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
+    ],
+  },
 ];
 
 // type: REST | GraphQL | gRPC | WebSocket
 // auth: JWT | API Key | OAuth2 | mTLS | 없음
 // scope: 내부 | 외부 | 파트너
-// status: 위험 | 취약 | 정상
+// status 기준: auth없음 / exposed+!rate_limit → 위험
+//             exposed+APIKey / violation 존재 → 취약 / 그 외 → 정상
 export const apiAssets = [
-  { id: "API-001", name: "OTA 배포 API",            type: "REST",      endpoint: "/api/v1/deploy",        auth: "JWT",     scope: "내부",  exposed: false, rate_limit: true,  version: "v1", linked_asset: "ASSET-001", severity: "High",     online_status: "온라인",  violation_ids: ["INV-007"], last_audited: "2025-03-10" },
-  { id: "API-002", name: "드론 연동 API",            type: "REST",      endpoint: "/api/v1/drone/sync",    auth: "API Key", scope: "파트너", exposed: true,  rate_limit: false, version: "v1", linked_asset: "ASSET-005", severity: "Critical", online_status: "온라인",  violation_ids: ["INV-031"], last_audited: "2025-01-15" },
-  { id: "API-003", name: "블랙박스 데이터 수집 API",  type: "REST",      endpoint: "/api/v2/blackbox/data", auth: "mTLS",    scope: "내부",  exposed: false, rate_limit: true,  version: "v2", linked_asset: "ASSET-014", severity: null,       online_status: "온라인",  violation_ids: [],          last_audited: "2025-05-01" },
-  { id: "API-004", name: "홈캠 스트리밍 API",        type: "WebSocket", endpoint: "/ws/cam/stream",         auth: "JWT",     scope: "외부",  exposed: true,  rate_limit: true,  version: "v1", linked_asset: "ASSET-016", severity: "Medium",   online_status: "온라인",  violation_ids: ["INV-055"], last_audited: "2025-04-01" },
-  { id: "API-005", name: "OTA 상태 조회 API",        type: "REST",      endpoint: "/api/v1/ota/status",    auth: "API Key", scope: "파트너", exposed: true,  rate_limit: false, version: "v1", linked_asset: "ASSET-001", severity: "High",     online_status: "온라인",  violation_ids: ["INV-007"], last_audited: "2025-02-20" },
-  { id: "API-006", name: "차량 데이터 분석 API",     type: "GraphQL",   endpoint: "/graphql",               auth: "OAuth2",  scope: "내부",  exposed: false, rate_limit: true,  version: "v1", linked_asset: "ASSET-003", severity: null,       online_status: "온라인",  violation_ids: [],          last_audited: "2025-05-15" },
-  { id: "API-007", name: "관리자 내부 API",          type: "REST",      endpoint: "/api/admin",             auth: "없음",    scope: "내부",  exposed: false, rate_limit: false, version: "v1", linked_asset: "ASSET-002", severity: "Critical", online_status: "온라인",  violation_ids: ["INV-031"], last_audited: "2024-11-01" },
-  { id: "API-008", name: "자동차 협력사 연동 API",   type: "REST",      endpoint: "/api/v1/partner/auto",  auth: "OAuth2",  scope: "파트너", exposed: true,  rate_limit: true,  version: "v1", linked_asset: "ASSET-004", severity: null,       online_status: "온라인",  violation_ids: [],          last_audited: "2025-06-01" },
+  { id: "API-001", name: "OTA 배포 API",            type: "REST",      endpoint: "/api/v1/deploy",        auth: "JWT",     scope: "내부",  exposed: false, rate_limit: true,  version: "v1", linked_asset: "ASSET-001", status: "취약",  violation_ids: ["INV-007"], last_audited: "2025-03-10" },
+  { id: "API-002", name: "드론 연동 API",            type: "REST",      endpoint: "/api/v1/drone/sync",    auth: "API Key", scope: "파트너", exposed: true,  rate_limit: false, version: "v1", linked_asset: "ASSET-005", status: "위험",  violation_ids: ["INV-031"], last_audited: "2025-01-15" },
+  { id: "API-003", name: "블랙박스 데이터 수집 API",  type: "REST",      endpoint: "/api/v2/blackbox/data", auth: "mTLS",    scope: "내부",  exposed: false, rate_limit: true,  version: "v2", linked_asset: "ASSET-014", status: "정상",  violation_ids: [],          last_audited: "2025-05-01" },
+  { id: "API-004", name: "홈캠 스트리밍 API",        type: "WebSocket", endpoint: "/ws/cam/stream",         auth: "JWT",     scope: "외부",  exposed: true,  rate_limit: true,  version: "v1", linked_asset: "ASSET-016", status: "취약",  violation_ids: ["INV-055"], last_audited: "2025-04-01" },
+  { id: "API-005", name: "OTA 상태 조회 API",        type: "REST",      endpoint: "/api/v1/ota/status",    auth: "API Key", scope: "파트너", exposed: true,  rate_limit: false, version: "v1", linked_asset: "ASSET-001", status: "위험",  violation_ids: ["INV-007"], last_audited: "2025-02-20" },
+  { id: "API-006", name: "차량 데이터 분석 API",     type: "GraphQL",   endpoint: "/graphql",               auth: "OAuth2",  scope: "내부",  exposed: false, rate_limit: true,  version: "v1", linked_asset: "ASSET-003", status: "정상",  violation_ids: [],          last_audited: "2025-05-15" },
+  { id: "API-007", name: "관리자 내부 API",          type: "REST",      endpoint: "/api/admin",             auth: "없음",    scope: "내부",  exposed: false, rate_limit: false, version: "v1", linked_asset: "ASSET-002", status: "위험",  violation_ids: ["INV-031"], last_audited: "2024-11-01" },
+  { id: "API-008", name: "자동차 협력사 연동 API",   type: "REST",      endpoint: "/api/v1/partner/auto",  auth: "OAuth2",  scope: "파트너", exposed: true,  rate_limit: true,  version: "v1", linked_asset: "ASSET-004", status: "정상",  violation_ids: [],          last_audited: "2025-06-01" },
 ];
+
+// ── 스캔 목록: 집계 지표만 포함 (항상 전체 로드, 트렌드 차트·스캔 선택기용) ──
+export const scanList = [
+  { scan_id: "SCAN-0042", scanned_at: "2025-01-10T10:00:00Z", status: "completed",
+    metrics: { score: 38, total_violations: 63, critical_high: 18, attack_chains: 11, vulnerable_asset_count: 16, patch_rate: 29 } },
+  { scan_id: "SCAN-0043", scanned_at: "2025-02-14T11:00:00Z", status: "completed",
+    metrics: { score: 44, total_violations: 58, critical_high: 16, attack_chains: 10, vulnerable_asset_count: 15, patch_rate: 33 } },
+  { scan_id: "SCAN-0044", scanned_at: "2025-03-20T09:30:00Z", status: "completed",
+    metrics: { score: 41, total_violations: 61, critical_high: 17, attack_chains: 11, vulnerable_asset_count: 14, patch_rate: 31 } },
+  { scan_id: "SCAN-0045", scanned_at: "2025-04-08T14:00:00Z", status: "completed",
+    metrics: { score: 52, total_violations: 54, critical_high: 14, attack_chains: 9,  vulnerable_asset_count: 13, patch_rate: 38 } },
+  { scan_id: "SCAN-0046", scanned_at: "2025-05-15T13:20:00Z", status: "completed",
+    metrics: { score: 49, total_violations: 52, critical_high: 15, attack_chains: 9,  vulnerable_asset_count: 13, patch_rate: 42 } },
+  { scan_id: "SCAN-0047", scanned_at: "2025-06-12T14:32:00Z", status: "completed",
+    metrics: { score: 58, total_violations: 47, critical_high: 12, attack_chains: 8,  vulnerable_asset_count: 11, patch_rate: 55 } },
+];
+
+// ── 스캔별 세부 데이터: 선택된 스캔에 대해 on-demand 로드 ──────────────────
+// 백엔드 연동 시 GET /scans/:id/details 로 교체 예정
+// SCAN-0042 ~ SCAN-0045 는 세부 데이터 미제공 (더미 데이터 범위 외)
+export const scanDetails = {
+  "SCAN-0047": {
+    summary: { total_violations: 47, critical_high: 12, attack_chains: 8 },
+    violations,
+    severityDistribution,
+    zoneViolations,
+    typeViolations,
+    attackChains,
+    mitreMapping,
+    pentestResults,
+    coverage,
+    assets,
+    assetHistory,
+    assetEvents,
+    assetPolicies,
+    remediations,
+    softwareAssets,
+    credentialAssets,
+    apiAssets,
+  },
+  "SCAN-0046": {
+    summary: { total_violations: 52, critical_high: 15, attack_chains: 9 },
+    violations: violations_0046,
+    severityDistribution: [
+      { name: "Critical", value: 8,  color: "#0C447C" },
+      { name: "High",     value: 7,  color: "#185FA5" },
+      { name: "Medium",   value: 23, color: "#378ADD" },
+      { name: "Low",      value: 14, color: "#85B7EB" },
+    ],
+    zoneViolations: [
+      { zone: "DMZ", count: 16 }, { zone: "운영", count: 13 }, { zone: "DB", count: 10 },
+      { zone: "개발", count: 8 },  { zone: "배포", count: 5 },  { zone: "업무", count: 0 },
+    ],
+    typeViolations: [
+      { name: "접근제어", value: 17, color: "#0C447C" },
+      { name: "네트워크", value: 15, color: "#185FA5" },
+      { name: "권한",    value: 12, color: "#378ADD" },
+      { name: "보안정책", value: 8,  color: "#85B7EB" },
+    ],
+    attackChains,
+    mitreMapping,
+    pentestResults: pentestResults_0046,
+    coverage: {
+      초기침투: { total_weight: 29, violated_weight: 20, coverage_pct: 31 },
+      내부이동: { total_weight: 25, violated_weight: 21, coverage_pct: 16 },
+      권한상승: { total_weight: 22, violated_weight: 14, coverage_pct: 36 },
+      데이터탈취: { total_weight: 20, violated_weight: 14, coverage_pct: 30 },
+    },
+    assets,
+    assetHistory,
+    assetEvents,
+    assetPolicies,
+    remediations,
+    softwareAssets,
+    credentialAssets,
+    apiAssets,
+  },
+};
