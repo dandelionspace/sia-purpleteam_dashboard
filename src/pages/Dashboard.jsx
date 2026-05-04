@@ -7,7 +7,8 @@ import PentestSection from "../components/PentestSection";
 import DefenseSection from "../components/DefenseSection";
 import InvariantSection from "../components/InvariantSection";
 import AssetSection from "../components/AssetSection";
-import { fetchScanList, fetchScanDetails } from "../services/scanService";
+import { fetchScanList, fetchScanDetails, USE_MOCK } from "../services/scanService";
+import { invariants as localInvariants } from "../data/invariantsData";
 import ScanSection from "../components/ScanSection";
 
 
@@ -56,6 +57,7 @@ export default function Dashboard() {
     data: scanListData = [],
     isLoading: loadingList,
     error: listError,
+    refetch: refetchScanList,
   } = useQuery({
     queryKey: ["scans"],
     queryFn: fetchScanList,
@@ -98,7 +100,24 @@ export default function Dashboard() {
   };
 
   const selectedScan = scanListData.find((s) => s.scan_id === selectedScanId);
-  const violations   = currentDetails?.violations ?? [];
+
+  // currentDetails가 없을 때 빈 기본값 — 컴포넌트 구조는 항상 렌더링
+  const violations        = currentDetails?.violations           ?? [];
+  const attackChains      = currentDetails?.attackChains         ?? [];
+  const mitreMapping      = currentDetails?.mitreMapping         ?? [];
+  const pentestResults    = currentDetails?.pentestResults       ?? [];
+  const coverage          = currentDetails?.coverage             ?? {};
+  const remediations      = currentDetails?.remediations         ?? [];
+  const assets            = currentDetails?.assets               ?? [];
+  const assetHistory      = currentDetails?.assetHistory         ?? [];
+  const assetEvents       = currentDetails?.assetEvents          ?? [];
+  const assetPolicies     = currentDetails?.assetPolicies        ?? [];
+  const softwareAssets    = currentDetails?.softwareAssets       ?? [];
+  const credentialAssets  = currentDetails?.credentialAssets     ?? [];
+  const apiAssets         = currentDetails?.apiAssets            ?? [];
+  const summary           = currentDetails?.summary              ?? { total_violations: 0, critical_high: 0, attack_chains: 0 };
+  // mock 모드에서는 로컬 불변식 데이터를 기본값으로, 실제 API 모드에서는 빈 배열
+  const invariantsData    = currentDetails?.invariants           ?? (USE_MOCK ? localInvariants : []);
 
   /* */
   return (
@@ -215,33 +234,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* 세부 데이터 없음 안내 — SCAN-0042~0045처럼 더미 데이터가 없는 스캔 선택 시 표시 */}
-        {!loadingDetails && selectedScan && !currentDetails && (
-          <div style={{ background: "#f5f5f3", borderRadius: 12, padding: "32px 24px", textAlign: "center", marginBottom: 24 }}>
-            <p style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18", margin: "0 0 6px" }}>
-              {selectedScan.scan_id} 세부 데이터를 불러올 수 없습니다
-            </p>
-            <p style={{ fontSize: 11, color: "#73726c", margin: "0 0 20px" }}>
-              이 스캔은 집계 지표만 제공됩니다. 백엔드 연동 후 전체 데이터를 조회할 수 있습니다.
-            </p>
-            <div style={{ display: "inline-flex", gap: 12 }}>
-              {[
-                { label: "보안 점수",    value: selectedScan.metrics.score,              unit: "점" },
-                { label: "총 취약점",    value: selectedScan.metrics.total_violations,   unit: "건" },
-                { label: "Critical/High", value: selectedScan.metrics.critical_high,     unit: "건" },
-                { label: "패치 적용률",  value: selectedScan.metrics.patch_rate,         unit: "%" },
-              ].map((m) => (
-                <div key={m.label} style={{ background: "#fff", borderRadius: 8, padding: "12px 20px", minWidth: 90 }}>
-                  <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>{m.label}</p>
-                  <p style={{ fontSize: 20, fontWeight: 500, color: "#1a1a18", margin: 0 }}>
-                    {m.value}<span style={{ fontSize: 11, marginLeft: 2 }}>{m.unit}</span>
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* 로딩 중 */}
         {loadingDetails && (
           <div style={{ padding: "48px 0", textAlign: "center" }}>
@@ -256,22 +248,23 @@ export default function Dashboard() {
               scanList={scanListData}
               selectedScanId={selectedScanId}
               onSelectScan={handleScanSelect}
+              onRefresh={refetchScanList}
             />
           </div>
         )}
 
-        {/* 각 네비게이션 별 보여주는 섹션들 — currentDetails가 있을 때만 렌더링 */}
+        {/* 각 섹션 — 데이터 없어도 구조는 항상 렌더링, 로딩 중일 때만 숨김 */}
 
-        {!loadingDetails && currentDetails && !current.sections.includes("scan") && (
+        {!loadingDetails && !current.sections.includes("scan") && (
           <>
             {/* 전역 필터 탭 — 취약점 발견 현황 페이지에서만 표시 */}
             {activeNav === "vuln" && (
               <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
-                {FILTER_TABS.map((tab) => {                    // 각 필터 탭에 대해 취약점 수 계산하고 버튼 생성
-                  const count = tab.id === "전체"              // 취약점 수 count 계산
+                {FILTER_TABS.map((tab) => {
+                  const count = tab.id === "전체"
                     ? violations.length
                     : violations.filter((v) => v.invariant_source === tab.id).length;
-                  const isActive = activeFilter === tab.id;   // 현재 필터가 선택된 필터인지 확인
+                  const isActive = activeFilter === tab.id;
                   return (
                     <button
                       key={tab.id}
@@ -304,11 +297,11 @@ export default function Dashboard() {
               <div style={{ marginBottom: 32 }}>
                 <p style={sectionLabel}>전체 현황</p>
                 <KpiCards
-                  summary={currentDetails.summary}
+                  summary={summary}
                   violations={violations}
                   activeFilter={activeNav === "vuln" ? activeFilter : "전체"}
-                  attackChains={currentDetails.attackChains}
-                  pentestResults={currentDetails.pentestResults} />
+                  attackChains={attackChains}
+                  pentestResults={pentestResults} />
               </div>
             )}
 
@@ -323,8 +316,8 @@ export default function Dashboard() {
             {current.sections.includes("attack") && (
               <div style={{ marginBottom: 32 }}>
                 <AttackSection
-                  attackChains={currentDetails.attackChains}
-                  mitreMapping={currentDetails.mitreMapping}
+                  attackChains={attackChains}
+                  mitreMapping={mitreMapping}
                   violations={violations}
                   activeFilter={activeFilter} />
               </div>
@@ -332,39 +325,39 @@ export default function Dashboard() {
 
             {current.sections.includes("invariant") && (
               <div style={{ marginBottom: 32 }}>
-                <InvariantSection invariants={currentDetails?.invariants} />
+                <InvariantSection invariants={invariantsData} />
               </div>
             )}
 
             {current.sections.includes("pentest") && (
               <div style={{ marginBottom: 32 }}>
-                <PentestSection pentestResults={currentDetails.pentestResults} />
+                <PentestSection pentestResults={pentestResults} />
               </div>
             )}
 
             {current.sections.includes("defense") && (
               <div style={{ marginBottom: 32 }}>
                 <DefenseSection
-                  coverage={currentDetails.coverage}
+                  coverage={coverage}
                   scoreHistory={scanListData.map((s) => ({
                     scan_id: s.scan_id,
                     scanned_at: s.scanned_at,
                     score: s.metrics.score,
                   }))}
-                  remediations={currentDetails.remediations} />
+                  remediations={remediations} />
               </div>
             )}
 
             {current.sections.includes("asset") && (
               <div style={{ marginBottom: 32 }}>
                 <AssetSection
-                  assets={currentDetails.assets}
-                  assetHistory={currentDetails.assetHistory}
-                  assetEvents={currentDetails.assetEvents}
-                  assetPolicies={currentDetails.assetPolicies}
-                  softwareAssets={currentDetails.softwareAssets}
-                  credentialAssets={currentDetails.credentialAssets}
-                  apiAssets={currentDetails.apiAssets} />
+                  assets={assets}
+                  assetHistory={assetHistory}
+                  assetEvents={assetEvents}
+                  assetPolicies={assetPolicies}
+                  softwareAssets={softwareAssets}
+                  credentialAssets={credentialAssets}
+                  apiAssets={apiAssets} />
               </div>
             )}
           </>
