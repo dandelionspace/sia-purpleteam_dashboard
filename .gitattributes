@@ -1,2 +1,8 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# 저장소는 항상 LF로 저장 — Linux 배포 환경에 맞춤
+* text=auto eol=lf
+
+# 바이너리 파일은 변환 안 함
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

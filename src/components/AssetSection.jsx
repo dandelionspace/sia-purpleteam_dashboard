@@ -115,7 +115,7 @@ function CategorySummaryCards({ assets, softwareAssets, credentialAssets, apiAss
 
   const hwTotal  = assets.length;
   const hwOnline = assets.filter((a) => a.online_status === "온라인").length;
-  const hwVuln   = assets.filter((a) => a.status === "취약").length;
+  const hwVuln   = assets.filter((a) => a.status === "취약" && a.managed).length;
 
   const swVuln      = softwareAssets.filter((s) => (s.cve_count > 0 && s.patch_status !== "적용완료") || s.eol || (s.violation_ids ?? []).length > 0).length;
   const swUnpatched = softwareAssets.filter((s) => s.patch_status !== "적용완료").length;
@@ -362,7 +362,7 @@ function TrendCharts({ assetHistory }) {
       </div>
 
       <div style={card}>
-        <p style={cardTitle}>③ 신규 / 비인가(Shadow IT) 자산 추이 <span style={chartNote}>보안 사각지대 확인</span></p>
+        <p style={cardTitle}>③ 신규 / 미등록(Shadow IT) 자산 추이 <span style={chartNote}>보안 사각지대 확인</span></p>
         <ResponsiveContainer width="100%" height={180}>
           <BarChart data={assetHistory} margin={{ top: 5, right: 20, bottom: 5, left: 0 }} barGap={4} barCategoryGap="35%">
             <CartesianGrid stroke="rgba(0,0,0,0.06)" />
@@ -370,12 +370,12 @@ function TrendCharts({ assetHistory }) {
             <YAxis tick={{ fontSize: 10, fill: "#73726c" }} />
             <Tooltip contentStyle={{ fontSize: 11, borderRadius: 6, border: "0.5px solid rgba(0,0,0,0.1)" }} formatter={(v, n) => [v + "대", n]} />
             <Bar dataKey="new_assets"   name="신규 등록"  fill="#378ADD" fillOpacity={0.7} radius={[3, 3, 0, 0]} />
-            <Bar dataKey="unregistered" name="비인가 자산" fill="#0C447C" fillOpacity={0.8} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="unregistered" name="미등록 자산" fill="#0C447C" fillOpacity={0.8} radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
         <div style={legendRow}>
           <LegendItem label="신규 등록"  color="#378ADD" isBar />
-          <LegendItem label="비인가 자산" color="#0C447C" isBar />
+          <LegendItem label="미등록 자산" color="#0C447C" isBar />
         </div>
       </div>
     </>
@@ -1045,12 +1045,11 @@ export default function AssetSection({ assets, assetHistory, assetEvents, assetP
           <InventoryCards assets={enrichedAssets} />
           <SubLabel>보안 상태 KPI</SubLabel>
           <SecurityKPI kpis={[
-            { label: "취약 자산",        color: "#0C447C", sub: "패치 미완료 · 미관리 · EDR/백신 미설치 · 불변식 위반", detail: "서버·PC만 에이전트 적용",                                                                                                                       value: enrichedAssets.filter((a) => a.status === "취약").length },
-            { label: "패치 미적용",      color: "#0C447C", sub: "지연 + 미적용 합산",          detail: `지연 ${enrichedAssets.filter((a) => a.patch_status === "지연").length} / 미적용 ${enrichedAssets.filter((a) => a.patch_status === "미적용").length}`,      value: enrichedAssets.filter((a) => a.patch_status !== "적용완료").length },
-            { label: "불변식 위반 보유", color: "#0C447C", sub: "violation 연결 자산",          detail: `총 위반 ${enrichedAssets.reduce((s, a) => s + a.violation_ids.length, 0)}건`,                                                                            value: enrichedAssets.filter((a) => a.violation_ids.length > 0).length },
-            { label: "EDR 미설치",       color: "#185FA5", sub: "초기 침투 진입점 위험",        detail: "서버 · PC 대상",                                                                                                                                          value: enrichedAssets.filter((a) => !a.edr && (a.type === "서버" || a.type === "PC")).length },
-            { label: "백신 미설치",      color: "#185FA5", sub: "악성코드 무방비",               detail: "서버 · PC 대상",                                                                                                                                          value: enrichedAssets.filter((a) => !a.av  && (a.type === "서버" || a.type === "PC")).length },
-            { label: "미관리 자산",      color: "#73726c", sub: "Shadow IT 위험",                detail: "인벤토리 미등록",                                                                                                                                         value: enrichedAssets.filter((a) => !a.managed).length },
+            { label: "취약 자산",        color: "#0C447C", sub: "패치 미완료 · EDR/백신 미설치 · 불변식 위반 (관리 자산 기준)", detail: "서버·PC만 에이전트 적용",                                                                                                                                    value: enrichedAssets.filter((a) => a.managed && a.status === "취약").length },
+            { label: "패치 미적용",      color: "#0C447C", sub: "지연 + 미적용 합산 (관리 자산 기준)",  detail: `지연 ${enrichedAssets.filter((a) => a.managed && a.patch_status === "지연").length} / 미적용 ${enrichedAssets.filter((a) => a.managed && a.patch_status === "미적용").length}`, value: enrichedAssets.filter((a) => a.managed && a.patch_status !== "적용완료").length },
+            { label: "불변식 위반 보유", color: "#0C447C", sub: "violation 연결 자산 (관리 자산 기준)",  detail: `총 위반 ${enrichedAssets.filter((a) => a.managed).reduce((s, a) => s + a.violation_ids.length, 0)}건`,                                                                     value: enrichedAssets.filter((a) => a.managed && a.violation_ids.length > 0).length },
+            { label: "EDR 미설치",       color: "#185FA5", sub: "초기 침투 진입점 위험 (관리 자산 기준)", detail: "서버 · PC 대상",                                                                                                                                                          value: enrichedAssets.filter((a) => a.managed && !a.edr && (a.type === "서버" || a.type === "PC")).length },
+            { label: "백신 미설치",      color: "#185FA5", sub: "악성코드 무방비 (관리 자산 기준)",       detail: "서버 · PC 대상",                                                                                                                                                          value: enrichedAssets.filter((a) => a.managed && !a.av  && (a.type === "서버" || a.type === "PC")).length },
           ]} />
           <SubLabel> 하드웨어 자산 목록</SubLabel>
           <AssetList assets={enrichedAssets} />

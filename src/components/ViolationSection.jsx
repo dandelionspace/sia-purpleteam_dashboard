@@ -1,12 +1,4 @@
-/*
- * 취약점 발견 현황 page의 [불변식 위반 현황]을 보여주는 컴포넌트
- *
- * - 전체/고정/가변 불변식 위반 수와 비율을 KPI 카드로 표시
- * - 위험도 분포를 도넛 차트로 시각화
- * - 서버존별 위반 수를 수평 막대그래프로 시각화
- * - 위반 항목 목록을 테이블로 표시 (위험도 순 정렬)
- */
-
+import { useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
 
 const SEVERITY_COLOR = {
@@ -15,16 +7,27 @@ const SEVERITY_COLOR = {
   Medium:   { bg: "#F0F6FE", text: "#378ADD" },
   Low:      { bg: "#E1F5EE", text: "#085041" },
 };
-
 const SEVERITY_CHART_COLOR = {
-  Critical: "#0C447C",
-  High:     "#185FA5",
-  Medium:   "#378ADD",
-  Low:      "#85B7EB",
+  Critical: "#0C447C", High: "#185FA5", Medium: "#378ADD", Low: "#85B7EB",
 };
 
+// status → 한국어 레이블 (violated | applied)
+const STATUS_LABEL = {
+  violated: { label: "위반", bg: "#E6F1FB", text: "#0C447C" },
+  applied:  { label: "통과", bg: "#E1F5EE", text: "#085041" },
+};
 
-/* 위험도 severity에 따른 색상 배지 컴포넌트 */
+// violation_reason → 한국어 레이블 (status == violated 일 때만 사용)
+const REASON_LABEL = {
+  clear_violation:      { label: "명확한 위반",              bg: "#E6F1FB", text: "#0C447C" },
+  partial_satisfaction: { label: "부분 충족",                bg: "#EEF4FD", text: "#185FA5" },
+  not_determined:       { label: "판단 불가",                bg: "#F0F6FE", text: "#378ADD" },
+  evidence_missing:     { label: "필수 Evidence 부족",       bg: "#FEF3C7", text: "#92400E" },
+  log_trace_gap:        { label: "로그/trace 단절",          bg: "#FEF3C7", text: "#92400E" },
+  control_not_observed: { label: "통제 수행 미관찰",         bg: "#f1efea", text: "#73726c" },
+  environment_not_ready:{ label: "환경 미준비",              bg: "#f1efea", text: "#73726c" },
+};
+
 function Badge({ severity }) {
   const c = SEVERITY_COLOR[severity] || { bg: "#f1efea", text: "#444" };
   return (
@@ -34,23 +37,49 @@ function Badge({ severity }) {
   );
 }
 
-/* violations 배열로부터 위험도 분포 계산 (critical과 high 갯수)*/
+function StatusBadge({ status }) {
+  const s = STATUS_LABEL[status] || { label: status, bg: "#f1efea", text: "#73726c" };
+  return (
+    <span style={{ background: s.bg, color: s.text, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99 }}>
+      {s.label}
+    </span>
+  );
+}
+
+function ReasonBadge({ reason }) {
+  if (!reason) return null;
+  const r = REASON_LABEL[reason] || { label: reason, bg: "#f1efea", text: "#73726c" };
+  return (
+    <span style={{ background: r.bg, color: r.text, fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 99 }}>
+      {r.label}
+    </span>
+  );
+}
+
+function ConfidenceBar({ value }) {
+  const pct = Math.round((value ?? 0) * 100);
+  const color = pct >= 80 ? "#0C447C" : pct >= 60 ? "#378ADD" : "#85B7EB";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <div style={{ width: 48, height: 4, background: "#f1efea", borderRadius: 99, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99 }} />
+      </div>
+      <span style={{ fontSize: 10, color: "#73726c" }}>{pct}%</span>
+    </div>
+  );
+}
+
 function calcSeverityDist(list) {
   const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
   list.forEach((v) => { if (counts[v.severity] !== undefined) counts[v.severity]++; });
-  // 차트용 데이터로 변환, 0인건 제거
   return Object.entries(counts)
-    .filter(([, value]) => value > 0)
+    .filter(([, val]) => val > 0)
     .map(([name, value]) => ({ name, value, color: SEVERITY_CHART_COLOR[name] }));
 }
 
-/* violations 배열로부터 서버존별 집계 계산 */
 function calcZoneDist(list) {
   const counts = {};
-  list.forEach((v) => {
-    counts[v.server_zone] = (counts[v.server_zone] || 0) + 1;
-  });
-  // 차트용 데이터로 변환(배열로 변환하고 정렬) 
+  list.forEach((v) => { counts[v.server_zone] = (counts[v.server_zone] || 0) + 1; });
   return Object.entries(counts)
     .map(([zone, count]) => ({ zone, count }))
     .sort((a, b) => b.count - a.count);
@@ -63,18 +92,152 @@ function formatDetectedAt(dt) {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
+// 위반 상세 드로어 ────────────────────────────────────────────────────────────
+function DetailDrawer({ violation, onClose }) {
+  const [visible, setVisible] = useState(false);
+  useState(() => { requestAnimationFrame(() => setVisible(true)); });
+
+  const handleClose = () => { setVisible(false); setTimeout(onClose, 220); };
+
+  return (
+    <>
+      <div onClick={handleClose} style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.15)",
+        zIndex: 100, opacity: visible ? 1 : 0, transition: "opacity 0.22s",
+      }} />
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 480,
+        background: "#fff", zIndex: 101, display: "flex", flexDirection: "column",
+        transform: visible ? "translateX(0)" : "translateX(100%)",
+        transition: "transform 0.22s ease",
+        boxShadow: "-4px 0 24px rgba(0,0,0,0.08)",
+      }}>
+        {/* 헤더 */}
+        <div style={{ padding: "16px 20px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", flexShrink: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: "#0C447C" }}>
+                  {violation.invariant_id || violation.id}
+                </span>
+                <StatusBadge status={violation.status} />
+                <Badge severity={violation.severity} />
+                {violation.violation_reason && <ReasonBadge reason={violation.violation_reason} />}
+              </div>
+              <p style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18", margin: 0 }}>
+                {violation.description}
+              </p>
+            </div>
+            <button onClick={handleClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: "#73726c", padding: 0 }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+          {/* AI 1 핵심 정보 */}
+          <div style={{ background: "#f5f5f3", borderRadius: 10, padding: 14, marginBottom: 16 }}>
+            <p style={{ fontSize: 10, fontWeight: 600, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>
+              AI 1 판단 근거
+            </p>
+            {/* 상태 + 위반 사유 */}
+            <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
+              <div>
+                <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>상태</p>
+                <StatusBadge status={violation.status} />
+              </div>
+              {violation.violation_reason && (
+                <div>
+                  <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>위반 사유</p>
+                  <ReasonBadge reason={violation.violation_reason} />
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 3px" }}>요약</p>
+              <p style={{ fontSize: 12, color: "#1a1a18", margin: 0, lineHeight: 1.6 }}>{violation.summary}</p>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 3px" }}>상세 이유</p>
+              <p style={{ fontSize: 12, color: "#1a1a18", margin: 0, lineHeight: 1.6 }}>{violation.reason}</p>
+            </div>
+            <div style={{ display: "flex", gap: 16 }}>
+              <div>
+                <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>신뢰도</p>
+                <ConfidenceBar value={violation.confidence} />
+              </div>
+              <div>
+                <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>result_id</p>
+                <span style={{ fontSize: 10, fontFamily: "monospace", color: "#73726c" }}>{violation.result_id}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 검증 가능 여부 */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 500, color: "#1a1a18" }}>현재 환경 검증 가능</span>
+              <span style={{
+                fontSize: 10, padding: "1px 7px", borderRadius: 99,
+                background: violation.current_environment_testable ? "#E1F5EE" : "#f1efea",
+                color: violation.current_environment_testable ? "#085041" : "#73726c",
+              }}>
+                {violation.current_environment_testable ? "가능" : "불가"}
+              </span>
+            </div>
+            {violation.testability_reason && (
+              <p style={{ fontSize: 11, color: "#73726c", margin: 0, lineHeight: 1.5 }}>
+                {violation.testability_reason}
+              </p>
+            )}
+          </div>
+
+          {/* Evidence / Asset 참조 */}
+          {violation.evidence_ids?.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 5px", fontWeight: 500 }}>Evidence 참조</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {violation.evidence_ids.map((e) => (
+                  <span key={e} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#f0f6fe", color: "#185FA5", border: "0.5px solid #c8ddf0" }}>{e}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {violation.asset_ids?.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 5px", fontWeight: 500 }}>영향 자산</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {violation.asset_ids.map((a) => (
+                  <span key={a} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, background: "#f5f5f3", color: "#73726c" }}>{a}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 조치 방안 */}
+          {violation.remediation && (
+            <div style={{ background: "#E6F1FB", borderRadius: 8, padding: "10px 14px" }}>
+              <p style={{ fontSize: 10, fontWeight: 600, color: "#0C447C", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                권고 조치 ({violation.priority})
+              </p>
+              <p style={{ fontSize: 12, color: "#0C447C", margin: 0, lineHeight: 1.6 }}>{violation.remediation}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// 메인 컴포넌트 ────────────────────────────────────────────────────────────────
 export default function ViolationSection({ violations, activeFilter = "전체" }) {
-  /* activeFilter에 따라 데이터 필터링
-   * - "전체"인 경우 모든 데이터를 보여주고, "fixed" 또는 "variable"인 경우 해당 데이터만 보여줌 
-   */
+  const [selected, setSelected] = useState(null);
+
   const filtered = violations.filter((v) => {
     if (activeFilter === "전체") return true;
     return v.invariant_source === activeFilter;
   });
-  
-  /* 필터링된 데이터로 차트 데이터 계산 */
+
   const severityDist = calcSeverityDist(filtered);
-  const zoneDist = calcZoneDist(filtered);
+  const zoneDist     = calcZoneDist(filtered);
 
   return (
     <div>
@@ -82,16 +245,12 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
 
       {/* 차트 2개 */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-
-        {/* 도넛 차트 */}
         <div style={card}>
           <p style={cardTitle}>위험도 분포</p>
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
               <Pie data={severityDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={2}>
-                {severityDist.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} />
-                ))}
+                {severityDist.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
               </Pie>
               <Tooltip formatter={(value, name) => [`${value}건`, name]} />
             </PieChart>
@@ -106,7 +265,6 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
           </div>
         </div>
 
-        {/* 수평 막대 */}
         <div style={card}>
           <p style={cardTitle}>서버존별 위반 수</p>
           <ResponsiveContainer width="100%" height={200}>
@@ -123,46 +281,50 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
       {/* 위반 목록 테이블 */}
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <p style={{ ...cardTitle, marginBottom: 0 }}>위반 항목 목록 (우선순위 정렬)</p>
+          <p style={{ ...cardTitle, marginBottom: 0 }}>위반 항목 목록</p>
           <span style={{ fontSize: 11, color: "#73726c" }}>{filtered.length}건</span>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              {["ID", "위험도", "위반 항목", "서버존", "유형", "구분", "탐지 시각"].map((h) => (
+              {["ID", "위험도", "상태", "위반 항목", "서버존", "신뢰도", "탐지 시각", ""].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.map((v) => (
-              <tr key={v.id}>
-                <td style={td}>{v.id}</td>
-                <td style={td}><Badge severity={v.severity} /></td>
-                <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.description}</td>
-                <td style={td}>{v.server_zone}</td>
-                <td style={td}>{v.type}</td>
-                <td style={td}>
-                  <span style={{
-                    fontSize: 10, padding: "2px 7px", borderRadius: 99, fontWeight: 500,
-                    background: v.invariant_source === "fixed" ? "#E6F1FB" : "#F0F6FE",
-                    color: v.invariant_source === "fixed" ? "#0C447C" : "#378ADD",
-                  }}>
-                    {v.invariant_source === "fixed" ? "고정" : "가변"}
-                  </span>
+              <tr key={v.id || v.invariant_id} style={{ cursor: "pointer" }}
+                  onClick={() => setSelected(v)}>
+                <td style={{ ...td, fontFamily: "monospace", fontSize: 11 }}>
+                  {v.invariant_id || v.id}
                 </td>
-                <td style={td}>{formatDetectedAt(v.detected_at)}</td>
+                <td style={td}><Badge severity={v.severity} /></td>
+                <td style={td}><StatusBadge status={v.status} /></td>
+                <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {v.summary || v.description}
+                </td>
+                <td style={td}>{v.server_zone}</td>
+                <td style={td}><ConfidenceBar value={v.confidence} /></td>
+                <td style={td}>{formatDetectedAt(v.detected_at || v.created_at)}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  <span style={{ fontSize: 10, color: "#185FA5" }}>상세 →</span>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {selected && (
+        <DetailDrawer violation={selected} onClose={() => setSelected(null)} />
+      )}
     </div>
   );
 }
 
 const sectionLabel = { fontSize: 11, fontWeight: 500, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 };
-const card = { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 16, marginBottom: 12 };
-const cardTitle = { fontSize: 13, fontWeight: 500, marginBottom: 14 };
+const card         = { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 16, marginBottom: 12 };
+const cardTitle    = { fontSize: 13, fontWeight: 500, marginBottom: 14 };
 const th = { textAlign: "left", color: "#73726c", fontWeight: 400, padding: "6px 8px", borderBottom: "0.5px solid rgba(0,0,0,0.1)" };
 const td = { padding: "7px 8px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", color: "#1a1a18" };

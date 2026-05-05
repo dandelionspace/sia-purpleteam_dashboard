@@ -219,7 +219,7 @@ export default function ScanSection({ scanList, selectedScanId, onSelectScan, on
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["스캔 ID", "점검 일시", "보안 점수", "총 취약점", "Critical/High", "패치율", ""].map((h) => (
+              {["스캔 ID", "점검 일시", "보안 점수", "총 위반 항목", "Critical/High", ""].map((h) => (
                 <th key={h} style={{
                   fontSize: 10, fontWeight: 500, color: "#73726c", textAlign: "left",
                   padding: "0 10px 10px", borderBottom: "0.5px solid rgba(0,0,0,0.08)",
@@ -262,11 +262,6 @@ export default function ScanSection({ scanList, selectedScanId, onSelectScan, on
                   <td style={td}>
                     <span style={{ fontSize: 12, color: "#1a1a18" }}>
                       {isRunning ? "—" : `${scan.metrics.critical_high}건`}
-                    </span>
-                  </td>
-                  <td style={td}>
-                    <span style={{ fontSize: 12, color: "#1a1a18" }}>
-                      {isRunning ? "—" : `${scan.metrics.patch_rate}%`}
                     </span>
                   </td>
                   <td style={td}>

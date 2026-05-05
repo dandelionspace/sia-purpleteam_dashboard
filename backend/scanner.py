@@ -1,13 +1,15 @@
 """
-스캔 실행 모듈
-Wazuh API, PostgreSQL, MinIO 에서 데이터를 수집해 프론트 형식으로 변환한다.
+스캔 실행 모듈 — AI 1/AI 2 결과 기반
+
+수집 흐름:
+  1. POST /api/ai1/results  → ai1_to_scan_detail()  → violations 갱신
+  2. POST /api/ai2/scenarios → ai2_to_scan_detail() → attackChains / mitreMapping 갱신
+  3. POST /api/scans/trigger → run_scan()            → PostgreSQL 자산 수집 + 초기 빈 스캔 생성
 """
 
-import os
 import logging
-import requests
-import urllib3
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
 
 try:
     import psycopg2
@@ -16,230 +18,36 @@ except ImportError:
     HAS_PSYCOPG2 = False
 
 from invariants import (
-    RULE_TO_INVARIANT,
+    INVARIANT_META,
+    SEVERITY_MAP,
     IP_PREFIX_TO_ZONE,
     TACTIC_NAMES,
     TECHNIQUE_NAMES,
+    enrich_violation,
 )
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 log = logging.getLogger("scanner")
 
-WAZUH_API   = os.getenv("WAZUH_API",          "https://wazuh.manager:55000")
-WAZUH_USER  = os.getenv("WAZUH_USER",         "wazuh-wui")
-WAZUH_PASS  = os.getenv("WAZUH_API_PASSWORD", "")
-DB_HOST     = os.getenv("DB_HOST",            "10.10.4.2")
-DB_PASS     = os.getenv("DB_PASSWORD",        "")
-MINIO_ENDPOINT  = os.getenv("MINIO_ENDPOINT",  "10.10.4.2:9000")
-MINIO_SECRET    = os.getenv("MINIO_SECRET_KEY", "")
-
-# ── Wazuh ─────────────────────────────────────────────────────────────────────
-
-def _wazuh_token() -> str:
-    resp = requests.post(
-        f"{WAZUH_API}/security/user/authenticate",
-        auth=(WAZUH_USER, WAZUH_PASS),
-        verify=False,
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()["data"]["token"]
-
-
-def fetch_wazuh_alerts(hours: int = 48) -> list:
-    try:
-        token = _wazuh_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(
-            f"{WAZUH_API}/alerts",
-            headers=headers,
-            params={
-                "limit": 1000,
-                "q": "rule.id>=100001;rule.id<=100108",
-                "sort": "-timestamp",
-            },
-            verify=False,
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("data", {}).get("affected_items", [])
-    except Exception as e:
-        log.warning("Wazuh alert fetch failed: %s", e)
-    return []
-
-
-# ── Wazuh alerts → violations ─────────────────────────────────────────────────
-
-def _ip_to_zone(ip: str) -> str:
-    prefix = ".".join(ip.split(".")[:3]) if ip else ""
-    return IP_PREFIX_TO_ZONE.get(prefix, "")
-
-
-def alerts_to_violations(alerts: list, scan_time: datetime) -> list:
-    violations = []
-    seen_rule_ids: set = set()
-
-    for alert in alerts:
-        try:
-            rule_id = int(alert.get("rule", {}).get("id", 0))
-        except (ValueError, TypeError):
-            continue
-
-        inv_def = RULE_TO_INVARIANT.get(rule_id)
-        if not inv_def or rule_id in seen_rule_ids:
-            continue
-        seen_rule_ids.add(rule_id)
-
-        agent_ip = alert.get("agent", {}).get("ip", "")
-        zone = _ip_to_zone(agent_ip) or inv_def["default_zone"]
-        timestamp = alert.get("timestamp", scan_time.isoformat() + "Z")
-
-        violations.append({
-            "id":               inv_def["id"],
-            "severity":         inv_def["severity"],
-            "description":      inv_def["description"],
-            "server_zone":      zone,
-            "type":             inv_def["type"],
-            "attack_phase":     inv_def["attack_phase"],
-            "mitre_tactic":     inv_def["mitre_tactic"],
-            "mitre_technique":  inv_def["mitre_technique"],
-            "weight":           inv_def["weight"],
-            "detected_at":      timestamp,
-            "invariant_source": inv_def["invariant_source"],
-        })
-
-    return violations
-
-
-# ── PostgreSQL: 감사 로그 → 추가 위반 탐지 ─────────────────────────────────────
-
-def fetch_db_violations(scan_time: datetime) -> list:
-    """audit_logs 테이블에서 DENIED 이벤트를 읽어 위반을 추가 탐지한다."""
-    if not HAS_PSYCOPG2:
-        return []
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database="argos_db",
-            user="argos_app", password=DB_PASS,
-            connect_timeout=5,
-        )
-        cur = conn.cursor()
-        since = (scan_time - timedelta(hours=48)).isoformat()
-        cur.execute("""
-            SELECT action, resource_type, source_ip, created_at
-            FROM audit_logs
-            WHERE result = 'DENIED'
-              AND created_at >= %s
-            ORDER BY created_at DESC
-            LIMIT 200
-        """, (since,))
-        rows = cur.fetchall()
-        conn.close()
-
-        extra: list = []
-        # BOLA 탐지: GET_DEVICE / GET_VIDEO_URL DENIED 는 INV-STD-07 에 해당
-        bola_actions = {"GET_DEVICE", "GET_VIDEO_URL", "GET_VIDEO"}
-        seen_bola = False
-        for action, resource_type, src_ip, created_at in rows:
-            if action in bola_actions and not seen_bola:
-                seen_bola = True
-                inv_def = RULE_TO_INVARIANT[100007]
-                zone = _ip_to_zone(src_ip or "") or inv_def["default_zone"]
-                extra.append({
-                    "id":               inv_def["id"],
-                    "severity":         inv_def["severity"],
-                    "description":      f"{inv_def['description']} — DB audit 탐지",
-                    "server_zone":      zone,
-                    "type":             inv_def["type"],
-                    "attack_phase":     inv_def["attack_phase"],
-                    "mitre_tactic":     inv_def["mitre_tactic"],
-                    "mitre_technique":  inv_def["mitre_technique"],
-                    "weight":           inv_def["weight"],
-                    "detected_at":      created_at.isoformat() + "Z",
-                    "invariant_source": inv_def["invariant_source"],
-                })
-        return extra
-    except Exception as e:
-        log.warning("DB audit fetch failed: %s", e)
-        return []
-
-
-def fetch_db_assets() -> list:
-    """devices 테이블에서 자산 목록을 가져온다."""
-    if not HAS_PSYCOPG2:
-        return []
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database="argos_db",
-            user="argos_app", password=DB_PASS,
-            connect_timeout=5,
-        )
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id::text, serial_number, model,
-                   firmware_version, status, registered_at
-            FROM devices
-            ORDER BY registered_at DESC
-            LIMIT 100
-        """)
-        rows = cur.fetchall()
-        conn.close()
-
-        assets = []
-        for idx, (did, serial, model, fw_ver, status, reg_at) in enumerate(rows, 1):
-            assets.append({
-                "id":           f"ASSET-{serial}",
-                "name":         serial,
-                "type":         "IoT",
-                "segment":      "내부망",
-                "zone":         "운영",
-                "ip":           f"10.20.{idx}.1",
-                "os":           f"Argos FW {fw_ver or 'unknown'}",
-                "os_age":       2,
-                "online_status": "온라인" if status == "active" else "오프라인",
-                "cvss_max":     None,
-                "patch_status": "적용완료" if status == "active" else "미적용",
-                "edr":          False,
-                "av":           False,
-                "managed":      True,
-                "exposed":      False,
-                "privilege":    "정상",
-                "violation_ids": [],
-                "last_seen":    reg_at.isoformat() + "Z" if reg_at else None,
-            })
-        return assets
-    except Exception as e:
-        log.warning("DB asset fetch failed: %s", e)
-        return []
-
+DB_HOST = os.getenv("DB_HOST",     "10.10.4.2")
+DB_PASS = os.getenv("DB_PASSWORD", "")
 
 # ── 지표 계산 ─────────────────────────────────────────────────────────────────
 
 _SEVERITY_COLORS = {
-    "Critical": "#0C447C",
-    "High":     "#185FA5",
-    "Medium":   "#378ADD",
-    "Low":      "#85B7EB",
+    "Critical": "#0C447C", "High": "#185FA5",
+    "Medium":   "#378ADD", "Low":  "#85B7EB",
 }
-
-_DEDUCTIONS = {"Critical": 10, "High": 7, "Medium": 4, "Low": 1}
-
-_PHASE_WEIGHTS = {
-    "초기침투": 29,
-    "내부이동": 25,
-    "권한상승": 22,
-    "데이터탈취": 20,
-}
-
-_TYPE_COLORS = ["#0C447C", "#185FA5", "#378ADD", "#85B7EB", "#AECDE8"]
+_DEDUCTIONS   = {"Critical": 10, "High": 7, "Medium": 4, "Low": 1}
+_PHASE_WEIGHTS = {"초기침투": 29, "내부이동": 25, "권한상승": 22, "데이터탈취": 20}
+_TYPE_COLORS   = ["#0C447C", "#185FA5", "#378ADD", "#85B7EB", "#AECDE8"]
 
 
-def calc_score(violations: list) -> int:
+def _calc_score(violations: list) -> int:
     total = sum(_DEDUCTIONS.get(v.get("severity", ""), 0) for v in violations)
     return max(0, 100 - total)
 
 
-def calc_severity_distribution(violations: list) -> list:
+def _calc_severity_dist(violations: list) -> list:
     counts = {k: 0 for k in _SEVERITY_COLORS}
     for v in violations:
         if v["severity"] in counts:
@@ -248,35 +56,30 @@ def calc_severity_distribution(violations: list) -> list:
             for k, n in counts.items()]
 
 
-def calc_zone_violations(violations: list) -> list:
-    zone_counts: dict = {}
+def _calc_zone_violations(violations: list) -> list:
+    zc: dict = {}
     for v in violations:
         z = v.get("server_zone", "기타")
-        zone_counts[z] = zone_counts.get(z, 0) + 1
+        zc[z] = zc.get(z, 0) + 1
     return [{"zone": k, "count": n}
-            for k, n in sorted(zone_counts.items(), key=lambda x: -x[1])]
+            for k, n in sorted(zc.items(), key=lambda x: -x[1])]
 
 
-def calc_type_violations(violations: list) -> list:
-    type_counts: dict = {}
+def _calc_type_violations(violations: list) -> list:
+    tc: dict = {}
     for v in violations:
         t = v.get("type", "기타")
-        type_counts[t] = type_counts.get(t, 0) + 1
-    return [
-        {"name": k, "value": n, "color": _TYPE_COLORS[i % len(_TYPE_COLORS)]}
-        for i, (k, n) in enumerate(
-            sorted(type_counts.items(), key=lambda x: -x[1])
-        )
-    ]
+        tc[t] = tc.get(t, 0) + 1
+    return [{"name": k, "value": n, "color": _TYPE_COLORS[i % len(_TYPE_COLORS)]}
+            for i, (k, n) in enumerate(sorted(tc.items(), key=lambda x: -x[1]))]
 
 
-def calc_coverage(violations: list) -> dict:
+def _calc_coverage(violations: list) -> dict:
     violated: dict = {p: 0 for p in _PHASE_WEIGHTS}
     for v in violations:
-        phase = v.get("attack_phase")
-        if phase in violated:
-            violated[phase] += v.get("weight", 0)
-
+        p = v.get("attack_phase")
+        if p in violated:
+            violated[p] += v.get("weight", 0)
     result = {}
     for phase, total in _PHASE_WEIGHTS.items():
         vw = min(violated[phase], total)
@@ -288,18 +91,37 @@ def calc_coverage(violations: list) -> dict:
     return result
 
 
-# ── MITRE 매핑 생성 ────────────────────────────────────────────────────────────
+def _build_remediations(violations: list) -> list:
+    seen: set = set()
+    items = []
+    for v in violations:
+        vid = v.get("id", v.get("invariant_id", ""))
+        if vid in seen:
+            continue
+        seen.add(vid)
+        items.append({
+            "violation_id": vid,
+            "description":  v.get("remediation", f"{v.get('description', '')} 조치 필요"),
+            "attack_phase": v.get("attack_phase", ""),
+            "priority":     v.get("priority", "1개월"),
+            "done":         False,
+        })
+    _prio = {"즉시": 0, "1주": 1, "1개월": 2}
+    items.sort(key=lambda x: _prio.get(x["priority"], 3))
+    return items
 
-def build_mitre_mapping(violations: list) -> list:
+
+def _build_mitre_mapping_from_violations(violations: list) -> list:
+    """violations의 mitre_tactic/mitre_technique 필드로 MITRE 히트맵 데이터 생성."""
     tactic_tech: dict = {}
     for v in violations:
-        tid = v.get("mitre_tactic", "")
+        tid  = v.get("mitre_tactic", "")
         tech = v.get("mitre_technique", "")
         if not tid:
             continue
         tactic_tech.setdefault(tid, {})\
             .setdefault(tech, {"violation_ids": [], "severity": v["severity"]})\
-            ["violation_ids"].append(v["id"])
+            ["violation_ids"].append(v.get("id", v.get("invariant_id", "")))
 
     result = []
     for tactic_id, tactic_name in TACTIC_NAMES.items():
@@ -319,184 +141,151 @@ def build_mitre_mapping(violations: list) -> list:
     return result
 
 
-# ── 공격 체인 생성 ─────────────────────────────────────────────────────────────
+# ── PostgreSQL 자산 수집 ───────────────────────────────────────────────────────
 
-_PHASE_ORDER = ["초기침투", "내부이동", "권한상승", "데이터탈취"]
-
-
-def build_attack_chains(violations: list) -> list:
-    phase_map: dict = {}
-    for v in violations:
-        p = v.get("attack_phase", "")
-        if p in _PHASE_ORDER:
-            phase_map.setdefault(p, []).append(v)
-
-    present = [p for p in _PHASE_ORDER if p in phase_map]
-    if len(present) < 2:
+def _fetch_db_assets() -> list:
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, database="argos_db",
+            user="argos_app", password=DB_PASS,
+            connect_timeout=5,
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id::text, serial_number, model, firmware_version, status, registered_at
+            FROM devices ORDER BY registered_at DESC LIMIT 100
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        assets = []
+        for idx, (did, serial, model, fw_ver, status, reg_at) in enumerate(rows, 1):
+            assets.append({
+                "id": f"ASSET-{serial}", "name": serial, "type": "IoT",
+                "segment": "내부망", "zone": "운영", "ip": f"10.20.{idx}.1",
+                "os": f"Argos FW {fw_ver or 'unknown'}", "os_age": 2,
+                "online_status": "온라인" if status == "active" else "오프라인",
+                "cvss_max": None,
+                "patch_status": "적용완료" if status == "active" else "미적용",
+                "edr": False, "av": False, "managed": True, "exposed": False,
+                "privilege": "정상", "violation_ids": [],
+                "last_seen": reg_at.isoformat() + "Z" if reg_at else None,
+            })
+        return assets
+    except Exception as e:
+        log.warning("DB asset fetch failed: %s", e)
         return []
 
-    total_weight = sum(v.get("weight", 0) for v in violations)
-    risk_score   = min(100, total_weight * 2)
 
-    nodes, edges = [], []
-    prev_id = None
-    for i, phase in enumerate(present):
-        nid = f"n{i + 1}"
-        pv  = phase_map[phase][0]
-        nodes.append({"id": nid, "label": phase, "violation_id": pv["id"], "phase": phase})
-        if prev_id:
-            edges.append({"from": prev_id, "to": nid})
-        prev_id = nid
+# ── AI 1 결과 → scan_detail 갱신 ────────────────────────────────────────────────
 
-    kill_chain = [
-        {
-            "step":         i + 1,
-            "phase":        phase,
-            "violation_id": phase_map[phase][0]["id"],
-            "mitre":        phase_map[phase][0].get("mitre_technique", ""),
-            "description":  f"{phase_map[phase][0]['description']}",
-        }
-        for i, phase in enumerate(present)
-    ]
+def ai1_to_scan_detail(detail: dict, scan_item: dict, violated_raw: list) -> tuple:
+    """
+    AI 1 violated 항목(raw AI 1 형식)을 받아
+    scan_detail과 scan_item(지표)을 갱신한 뒤 반환한다.
+    """
+    # 기존 violations 중 동일 invariant_id가 있으면 덮어쓰기, 없으면 추가
+    existing = {v.get("invariant_id", v.get("id", "")): v
+                for v in detail.get("violations", [])}
 
-    seen_tech: set = set()
-    techniques = []
-    for v in violations:
-        tech = v.get("mitre_technique", "")
-        if tech and tech not in seen_tech:
-            seen_tech.add(tech)
-            techniques.append({
-                "id":          tech,
-                "name":        TECHNIQUE_NAMES.get(tech, tech),
-                "tactic":      v.get("mitre_tactic", ""),
-                "violation_id": v["id"],
-                "description": v["description"],
-            })
+    for raw in violated_raw:
+        enriched = enrich_violation(raw)
+        inv_id   = enriched["invariant_id"]
+        existing[inv_id] = enriched
 
-    ids = {v["id"] for v in violations}
-    if "INV-STD-01" in ids:
-        title = "퇴직자 계정 활용 공격 체인"
-    elif "INV-ARG-01" in ids or "INV-ARG-03" in ids:
-        title = "테넌트 격리 위반 공격 체인"
-    else:
-        title = f"자동 탐지 공격 체인 — {present[0]} → {present[-1]}"
+    violations = list(existing.values())
 
-    return [{
-        "chain_id":   "CHAIN-AUTO-001",
-        "title":      title,
-        "risk_score": risk_score,
-        "nodes":      nodes,
-        "edges":      edges,
-        "kill_chain": kill_chain,
-        "techniques": techniques,
-        "procedures": [],
-    }]
+    detail["violations"]           = violations
+    detail["severityDistribution"] = _calc_severity_dist(violations)
+    detail["zoneViolations"]       = _calc_zone_violations(violations)
+    detail["typeViolations"]       = _calc_type_violations(violations)
+    detail["coverage"]             = _calc_coverage(violations)
+    detail["remediations"]         = _build_remediations(violations)
+    detail["mitreMapping"]         = _build_mitre_mapping_from_violations(violations)
+    detail["summary"] = {
+        "total_violations": len(violations),
+        "critical_high":    sum(1 for v in violations if v["severity"] in ("Critical", "High")),
+        "attack_chains":    len(detail.get("attackChains", [])),
+    }
+
+    score = _calc_score(violations)
+    scan_item["metrics"]["score"]           = score
+    scan_item["metrics"]["total_violations"] = len(violations)
+    scan_item["metrics"]["critical_high"]   = detail["summary"]["critical_high"]
+
+    return detail, scan_item
 
 
-# ── 조치 방안 생성 ─────────────────────────────────────────────────────────────
+# ── AI 2 시나리오 → scan_detail 갱신 ────────────────────────────────────────────
 
-_PRIORITY_ORDER = {"즉시": 0, "1주": 1, "1개월": 2}
+def ai2_to_scan_detail(detail: dict, scan_item: dict, scenarios: list) -> tuple:
+    """
+    AI 2 chain_scenario 목록을 받아
+    scan_detail의 attackChains을 갱신하고 지표를 업데이트한다.
+    mitreMapping은 violations 기반으로 이미 존재하므로 유지한다.
+    """
+    # chain_scenario_id 기준 upsert
+    existing = {s.get("chain_scenario_id", ""): s
+                for s in detail.get("attackChains", [])}
+    for s in scenarios:
+        cid = s.get("chain_scenario_id", "")
+        if cid:
+            existing[cid] = s
 
+    detail["attackChains"] = list(existing.values())
+    detail["summary"]["attack_chains"] = len(detail["attackChains"])
+    scan_item["metrics"]["attack_chains"] = len(detail["attackChains"])
 
-def build_remediations(violations: list) -> list:
-    seen: set = set()
-    remediations = []
-
-    inv_by_id = {d["id"]: d for d in RULE_TO_INVARIANT.values()}
-
-    for v in violations:
-        vid = v["id"]
-        if vid in seen:
-            continue
-        seen.add(vid)
-        inv_def = inv_by_id.get(vid, {})
-        remediations.append({
-            "violation_id": vid,
-            "description":  inv_def.get("remediation", f"{v['description']} 조치 필요"),
-            "attack_phase": v.get("attack_phase", ""),
-            "priority":     inv_def.get("priority", "1개월"),
-            "done":         False,
-        })
-
-    remediations.sort(key=lambda x: _PRIORITY_ORDER.get(x["priority"], 3))
-    return remediations
+    return detail, scan_item
 
 
-# ── 메인 스캔 실행 ─────────────────────────────────────────────────────────────
+# ── 최초 스캔 실행 ─────────────────────────────────────────────────────────────
 
 def run_scan(scan_id: str) -> tuple:
     """
-    스캔을 실행하고 (scan_item, scan_detail) 튜플을 반환한다.
-    Wazuh/DB 연결 실패 시 빈 결과로 안전하게 계속 진행한다.
+    초기 빈 스캔을 생성한다.
+    실제 violations/attackChains 는 AI 1/AI 2 결과 수신 시 채워진다.
     """
     scan_time = datetime.utcnow()
+    assets    = _fetch_db_assets()
 
-    # 1. 데이터 수집
-    alerts     = fetch_wazuh_alerts(hours=48)
-    violations = alerts_to_violations(alerts, scan_time)
-
-    db_violations = fetch_db_violations(scan_time)
-    # DB 탐지 결과 중 Wazuh에서 이미 탐지하지 못한 항목만 추가
-    existing_ids = {v["id"] for v in violations}
-    for dv in db_violations:
-        if dv["id"] not in existing_ids:
-            violations.append(dv)
-            existing_ids.add(dv["id"])
-
-    assets = fetch_db_assets()
-
-    # 2. 지표 계산
-    score            = calc_score(violations)
-    critical_high    = sum(1 for v in violations if v["severity"] in ("Critical", "High"))
-    sev_dist         = calc_severity_distribution(violations)
-    zone_viol        = calc_zone_violations(violations)
-    type_viol        = calc_type_violations(violations)
-    coverage         = calc_coverage(violations)
-    mitre_mapping    = build_mitre_mapping(violations)
-    attack_chains    = build_attack_chains(violations)
-    remediations     = build_remediations(violations)
-
-    # 3. 스캔 목록 항목
     scan_item = {
         "scan_id":    scan_id,
         "scanned_at": scan_time.isoformat() + "Z",
         "status":     "completed",
         "metrics": {
-            "score":                   score,
-            "total_violations":        len(violations),
-            "critical_high":           critical_high,
-            "attack_chains":           len(attack_chains),
-            "vulnerable_asset_count":  len([a for a in assets if a.get("online_status") == "오프라인"]),
-            "patch_rate":              round(
+            "score":                  100,
+            "total_violations":       0,
+            "critical_high":          0,
+            "attack_chains":          0,
+            "vulnerable_asset_count": 0,
+            "patch_rate":             round(
                 len([a for a in assets if a.get("patch_status") == "적용완료"]) /
                 max(len(assets), 1) * 100
             ),
         },
     }
 
-    # 4. 스캔 세부 정보
     scan_detail = {
-        "summary": {
-            "total_violations": len(violations),
-            "critical_high":    critical_high,
-            "attack_chains":    len(attack_chains),
-        },
-        "violations":            violations,
-        "severityDistribution":  sev_dist,
-        "zoneViolations":        zone_viol,
-        "typeViolations":        type_viol,
-        "attackChains":          attack_chains,
-        "mitreMapping":          mitre_mapping,
-        "pentestResults":        [],   # 수동 입력용 (POST /scans/{id}/pentest 로 업데이트)
-        "coverage":              coverage,
-        "assets":                assets,
-        "assetHistory":          [],
-        "assetEvents":           [],
-        "assetPolicies":         [],
-        "remediations":          remediations,
-        "softwareAssets":        [],
-        "credentialAssets":      [],
-        "apiAssets":             [],
+        "summary":              {"total_violations": 0, "critical_high": 0, "attack_chains": 0},
+        "violations":           [],
+        "severityDistribution": [],
+        "zoneViolations":       [],
+        "typeViolations":       [],
+        "attackChains":         [],
+        "mitreMapping":         _build_mitre_mapping_from_violations([]),
+        "pentestResults":       [],
+        "coverage":             _calc_coverage([]),
+        "assets":               assets,
+        "assetHistory":         [],
+        "assetEvents":          [],
+        "assetPolicies":        [],
+        "remediations":         [],
+        "softwareAssets":       [],
+        "credentialAssets":     [],
+        "apiAssets":            [],
     }
 
+    log.info("초기 스캔 생성 완료: %s (자산 %d개)", scan_id, len(assets))
     return scan_item, scan_detail

@@ -1,11 +1,15 @@
 """
 Argos Dashboard API — argos-security (10.10.8.2) 에서 실행
-프론트엔드에서 요구하는 두 엔드포인트:
-  GET  /api/scans
-  GET  /api/scans/{scan_id}/details
-추가 엔드포인트:
-  POST /api/scans/trigger           — 새 스캔 실행
-  PUT  /api/scans/{scan_id}/pentest — 모의침투 결과 저장
+
+엔드포인트 목록:
+  GET  /api/scans                        — 스캔 목록
+  GET  /api/scans/{scan_id}/details      — 스캔 세부 결과
+  POST /api/scans/trigger                — 새 스캔 실행 (백그라운드)
+  POST /api/scans/{scan_id}/pentest      — Red Team 결과 저장
+
+  POST /api/ai1/results                  — AI 1 불변식 판단 결과 수신 (최신 스캔에 반영)
+  POST /api/ai2/scenarios                — AI 2 체인 시나리오 수신 (최신 스캔에 반영)
+
   GET  /api/health
 """
 
@@ -20,9 +24,9 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
-from scanner import run_scan
+from scanner import run_scan, ai1_to_scan_detail, ai2_to_scan_detail
 
 logging.basicConfig(
     level=logging.INFO,
@@ -255,3 +259,142 @@ def health():
         "service":     "argos-dashboard-api",
         "total_scans": len(scans),
     }
+
+
+# ── AI 1 결과 수신 ──────────────────────────────────────────────────────────────
+
+_VALID_VIOLATION_REASONS = {
+    "clear_violation", "partial_satisfaction", "not_determined",
+    "evidence_missing", "log_trace_gap", "control_not_observed", "environment_not_ready",
+}
+
+
+class AI1Result(BaseModel):
+    schema_version:             str
+    result_id:                  str
+    created_at:                 str
+    invariant_id:               str
+    confidence:                 float
+    severity:                   str
+    evidence_ids:               list[str]   = []
+    asset_ids:                  list[str]   = []
+    status:                     str         # applied | violated
+    violation_reason:           Optional[str] = None
+    summary:                    str
+    reason:                     str
+    current_environment_testable: bool      = False
+    testability_reason:         str         = ""
+
+    @model_validator(mode="after")
+    def _validate_status_reason(self):
+        if self.status == "applied":
+            self.violation_reason = None
+        elif self.status == "violated":
+            if self.violation_reason is not None and self.violation_reason not in _VALID_VIOLATION_REASONS:
+                raise ValueError(
+                    f"violation_reason '{self.violation_reason}' 은 허용되지 않는 값입니다. "
+                    f"허용값: {sorted(_VALID_VIOLATION_REASONS)}"
+                )
+        else:
+            raise ValueError(f"status는 'applied' 또는 'violated' 이어야 합니다. 받은 값: '{self.status}'")
+        return self
+
+
+class AI1Bundle(BaseModel):
+    schema_version: str
+    bundle_id:      str
+    created_at:     str
+    items:          list[AI1Result]
+
+
+@app.post("/api/ai1/results", status_code=200)
+def receive_ai1_results(bundle: AI1Bundle):
+    """
+    AI 1 불변식 판단 결과를 수신해 최신 스캔에 반영한다.
+    status == violated 항목만 violations 에 추가한다.
+    """
+    scans = _load_scan_list()
+    if not scans:
+        raise HTTPException(status_code=404, detail="저장된 스캔이 없습니다. 먼저 스캔을 실행하세요.")
+
+    latest_id = scans[0]["scan_id"]
+    detail    = _load_scan_detail(latest_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"스캔 세부 데이터 없음: {latest_id}")
+
+    violated = [r.model_dump() for r in bundle.items if r.status == "violated"]
+    updated_detail, updated_item = ai1_to_scan_detail(detail, scans[0], violated)
+
+    # 스캔 목록 지표 갱신
+    scans[0] = updated_item
+    _save_scan_list(scans)
+    _save_scan_detail(latest_id, updated_detail)
+
+    log.info("AI 1 결과 수신: scan=%s, violated=%d/%d",
+             latest_id, len(violated), len(bundle.items))
+    return {"status": "ok", "scan_id": latest_id, "violated_count": len(violated)}
+
+
+# ── AI 2 시나리오 수신 ──────────────────────────────────────────────────────────
+
+class MitreStep(BaseModel):
+    order:               int
+    tactic:              str
+    step:                str
+    related_invariants:  list[str] = []
+    reason:              str       = ""
+
+
+class ValidationGuide(BaseModel):
+    goal:               str          = ""
+    steps:              list[str]    = []
+    success_criteria:   list[str]    = []
+    evidence_to_collect: list[str]   = []
+    safety_boundary:    list[str]    = []
+
+
+class ScenarioBasis(BaseModel):
+    status:           str = ""
+    violation_reason: str = ""
+    summary:          str = ""
+
+
+class AI2Scenario(BaseModel):
+    schema_version:              str
+    chain_scenario_id:           str
+    created_at:                  str
+    title:                       str
+    source_bundle_id:            str         = ""
+    risk_level:                  str         # critical | high | medium | low
+    scenario_basis:              Optional[ScenarioBasis] = None
+    current_environment_testable: bool       = False
+    testability_reason:          str         = ""
+    related_invariants:          list[str]   = []
+    attack_chain:                list[str]   = []
+    mitre_attack_flow:           list[MitreStep] = []
+    manual_validation_guide:     Optional[ValidationGuide] = None
+
+
+@app.post("/api/ai2/scenarios", status_code=200)
+def receive_ai2_scenarios(scenarios: list[AI2Scenario]):
+    """
+    AI 2 체인 시나리오를 수신해 최신 스캔에 반영한다.
+    """
+    scans = _load_scan_list()
+    if not scans:
+        raise HTTPException(status_code=404, detail="저장된 스캔이 없습니다.")
+
+    latest_id = scans[0]["scan_id"]
+    detail    = _load_scan_detail(latest_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"스캔 세부 데이터 없음: {latest_id}")
+
+    scenario_dicts = [s.model_dump() for s in scenarios]
+    updated_detail, updated_item = ai2_to_scan_detail(detail, scans[0], scenario_dicts)
+
+    scans[0] = updated_item
+    _save_scan_list(scans)
+    _save_scan_detail(latest_id, updated_detail)
+
+    log.info("AI 2 시나리오 수신: scan=%s, scenarios=%d", latest_id, len(scenarios))
+    return {"status": "ok", "scan_id": latest_id, "scenario_count": len(scenarios)}
