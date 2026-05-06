@@ -15,13 +15,13 @@ const NODE_COLORS = [
 ];
 
 const SEVERITY_COLOR = {
-  Critical: "#0C447C", High: "#185FA5", Medium: "#378ADD", Low: "#85B7EB",
+  Critical: "#E05252", High: "#F0874A", Medium: "#F6C142", Low: "#38A169",
 };
 const SEVERITY_BADGE = {
-  Critical: { bg: "#E6F1FB", text: "#0C447C" },
-  High:     { bg: "#EEF4FD", text: "#185FA5" },
-  Medium:   { bg: "#F0F6FE", text: "#378ADD" },
-  Low:      { bg: "#E1F5EE", text: "#085041" },
+  Critical: { bg: "#FEF1F1", text: "#C53030" },
+  High:     { bg: "#FEF4EE", text: "#BF5520" },
+  Medium:   { bg: "#FEF9E4", text: "#9C6F00" },
+  Low:      { bg: "#F0FDF9", text: "#276749" },
 };
 const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"];
 
@@ -94,7 +94,7 @@ function MitreHeatmap({ mitreMapping, violations }) {
                   {techniques.map((tech) => {
                     const sev        = getSeverity(tech, violations);
                     const bg         = SEVERITY_COLOR[sev] || "#E6F1FB";
-                    const txtColor   = (sev === "Critical" || sev === "High") ? "#E6F1FB" : "#0C447C";
+                    const txtColor   = sev ? "#fff" : "#0C447C";
                     const isSelected = selected?.technique_id === tech.technique_id && selected?.tactic_name === tac.name;
                     return (
                       <div
@@ -134,21 +134,21 @@ function MitreHeatmap({ mitreMapping, violations }) {
 
       {/* 선택된 기법 하단 패널 — OLD 스타일 (border + 헤더/바디 분리) */}
       {selected && (
-        <div style={{ marginTop: 12, border: "0.5px solid #378ADD", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ marginTop: 12, border: "0.5px solid #CBD5E1", borderRadius: 8, overflow: "hidden" }}>
           {/* 패널 헤더 */}
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "10px 14px", background: "#E6F1FB",
+            padding: "10px 14px", background: "#F1F5F9",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: "#0C447C" }}>{selected.technique_id}</span>
-              <span style={{ fontSize: 12, color: "#185FA5" }}>{selected.name}</span>
-              <span style={{ fontSize: 11, color: "#73726c" }}>· {selected.tactic_name}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>{selected.technique_id}</span>
+              <span style={{ fontSize: 12, color: "#475569" }}>{selected.name}</span>
+              <span style={{ fontSize: 11, color: "#94A3B8" }}>· {selected.tactic_name}</span>
             </div>
-            <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#73726c", padding: 0 }}>✕</button>
+            <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#94A3B8", padding: 0 }}>✕</button>
           </div>
           {/* 패널 바디 */}
-          <div style={{ padding: "12px 14px" }}>
+          <div style={{ padding: "12px 14px", background: "#fff" }}>
             <p style={{ fontSize: 11, color: "#73726c", margin: "0 0 8px" }}>
               연결된 불변식 위반 항목 {linkedViolations.length}개
             </p>
@@ -224,11 +224,12 @@ function KillChainTab({ flow }) {
 
 function TechniquesTab({ chain, violations }) {
   const invIds = chain.related_invariants ?? [];
-  const linked = violations.filter((v) => invIds.includes(v.id));
 
-  if (!linked.length && !invIds.length) return <p style={emptyText}>연결된 불변식 정보가 없습니다.</p>;
+  if (!invIds.length) return <p style={emptyText}>연결된 불변식 정보가 없습니다.</p>;
 
-  const display = linked.length ? linked : invIds.map((id) => ({ id, severity: null, summary: "", type: "", attack_phase: "" }));
+  // violations 맵으로 빠르게 조회 — ID가 있으면 상세 데이터, 없으면 ID만 표시 (silent drop 방지)
+  const violationMap = Object.fromEntries(violations.map((v) => [v.id, v]));
+  const display = invIds.map((id) => violationMap[id] ?? { id, severity: null, summary: "", type: "", attack_phase: "" });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

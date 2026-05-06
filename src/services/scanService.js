@@ -1,5 +1,6 @@
 import axios from "axios";
 import { scanList as mockScanList, scanDetails as mockScanDetails } from "../data/dummyData";
+import { invariants as mockInvariants } from "../data/invariantsData";
 
 // VITE_API_BASE_URL이 설정되지 않으면 mock 데이터를 사용합니다.
 export const USE_MOCK = !import.meta.env.VITE_API_BASE_URL;
@@ -37,4 +38,16 @@ export const triggerScan = () => {
 export const savePentestResult = (scanId, result) => {
   if (USE_MOCK) return Promise.resolve({ status: "ok" });
   return api.post(`/scans/${scanId}/pentest`, result).then((r) => r.data);
+};
+
+// 불변식 정의 목록 조회
+export const fetchInvariants = () => {
+  if (USE_MOCK) return Promise.resolve(mockInvariants);
+  return api.get("/invariants").then((r) => r.data);
+};
+
+// 불변식 정의 추가/upsert
+export const createInvariant = (def) => {
+  if (USE_MOCK) return Promise.resolve({ status: "ok", id: def.id });
+  return api.post("/invariants", def).then((r) => r.data);
 };

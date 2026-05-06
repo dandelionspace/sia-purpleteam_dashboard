@@ -2,30 +2,40 @@ import { useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
 
 const SEVERITY_COLOR = {
-  Critical: { bg: "#E6F1FB", text: "#0C447C" },
-  High:     { bg: "#EEF4FD", text: "#185FA5" },
-  Medium:   { bg: "#F0F6FE", text: "#378ADD" },
-  Low:      { bg: "#E1F5EE", text: "#085041" },
+  Critical: { bg: "#FEF1F1", text: "#C53030" },
+  High:     { bg: "#FEF4EE", text: "#BF5520" },
+  Medium:   { bg: "#FEF9E4", text: "#9C6F00" },
+  Low:      { bg: "#F0FDF9", text: "#276749" },
 };
 const SEVERITY_CHART_COLOR = {
-  Critical: "#0C447C", High: "#185FA5", Medium: "#378ADD", Low: "#85B7EB",
+  Critical: "#E05252", High: "#F0874A", Medium: "#F6C142", Low: "#38A169",
 };
 
-// status → 한국어 레이블 (violated | applied)
-const STATUS_LABEL = {
-  violated: { label: "위반", bg: "#E6F1FB", text: "#0C447C" },
-  applied:  { label: "통과", bg: "#E1F5EE", text: "#085041" },
+// violation_reason → 위반 유형 레이블
+const VIOLATION_TYPE = {
+  clear_violation:      "명확한 위반",
+  partial_satisfaction: "부분 충족",
+  evidence_missing:     "증거 불충분",
+  log_trace_gap:        "증거 불충분",
+  not_determined:       "증거 불충분",
+  control_not_observed: "검증 불가",
+  environment_not_ready:"검증 불가",
 };
 
-// violation_reason → 한국어 레이블 (status == violated 일 때만 사용)
+// violation_reason → 드로어용 상세 레이블
 const REASON_LABEL = {
-  clear_violation:      { label: "명확한 위반",              bg: "#E6F1FB", text: "#0C447C" },
-  partial_satisfaction: { label: "부분 충족",                bg: "#EEF4FD", text: "#185FA5" },
-  not_determined:       { label: "판단 불가",                bg: "#F0F6FE", text: "#378ADD" },
-  evidence_missing:     { label: "필수 Evidence 부족",       bg: "#FEF3C7", text: "#92400E" },
-  log_trace_gap:        { label: "로그/trace 단절",          bg: "#FEF3C7", text: "#92400E" },
-  control_not_observed: { label: "통제 수행 미관찰",         bg: "#f1efea", text: "#73726c" },
-  environment_not_ready:{ label: "환경 미준비",              bg: "#f1efea", text: "#73726c" },
+  clear_violation:      { label: "명확한 위반",        bg: "#E6F1FB", text: "#0C447C" },
+  partial_satisfaction: { label: "부분 충족",          bg: "#EEF4FD", text: "#185FA5" },
+  not_determined:       { label: "판단 불가",          bg: "#F0F6FE", text: "#378ADD" },
+  evidence_missing:     { label: "필수 Evidence 부족", bg: "#FEF3C7", text: "#92400E" },
+  log_trace_gap:        { label: "로그/trace 단절",    bg: "#FEF3C7", text: "#92400E" },
+  control_not_observed: { label: "통제 수행 미관찰",   bg: "#f1efea", text: "#73726c" },
+  environment_not_ready:{ label: "환경 미준비",         bg: "#f1efea", text: "#73726c" },
+};
+
+const STATUS_LABEL = {
+  violated: { label: "위반", bg: "#FEF1F1", text: "#C53030" },
+  applied:  { label: "통과", bg: "#F0FDF9", text: "#276749" },
 };
 
 function Badge({ severity }) {
@@ -34,6 +44,13 @@ function Badge({ severity }) {
     <span style={{ background: c.bg, color: c.text, fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 99 }}>
       {severity}
     </span>
+  );
+}
+
+function ViolationTypeBadge({ reason }) {
+  const label = VIOLATION_TYPE[reason] ?? "-";
+  return (
+    <span style={{ fontSize: 11, color: "#73726c" }}>{label}</span>
   );
 }
 
@@ -56,15 +73,34 @@ function ReasonBadge({ reason }) {
   );
 }
 
+// 신뢰도 바 — 중립 슬레이트 단색으로 통일 (severity 색과 경쟁 방지)
 function ConfidenceBar({ value }) {
   const pct = Math.round((value ?? 0) * 100);
-  const color = pct >= 80 ? "#0C447C" : pct >= 60 ? "#378ADD" : "#85B7EB";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-      <div style={{ width: 48, height: 4, background: "#f1efea", borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99 }} />
+      <div style={{ width: 48, height: 4, background: "#E5E7EB", borderRadius: 99, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: "#94A3B8", borderRadius: 99 }} />
       </div>
       <span style={{ fontSize: 10, color: "#73726c" }}>{pct}%</span>
+    </div>
+  );
+}
+
+// 연관 자산 — 최대 2개 표시 후 +N
+function AssetChips({ assetIds }) {
+  if (!assetIds?.length) return <span style={{ color: "#b0aea8", fontSize: 11 }}>-</span>;
+  const visible = assetIds.slice(0, 2);
+  const rest    = assetIds.length - visible.length;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+      {visible.map((a) => (
+        <span key={a} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F1F5F9", color: "#475569" }}>
+          {a}
+        </span>
+      ))}
+      {rest > 0 && (
+        <span style={{ fontSize: 10, color: "#94A3B8" }}>+{rest}</span>
+      )}
     </div>
   );
 }
@@ -116,13 +152,10 @@ function DetailDrawer({ violation, onClose }) {
         <div style={{ padding: "16px 20px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", flexShrink: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
+              <div style={{ marginBottom: 4 }}>
                 <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: "#0C447C" }}>
                   {violation.invariant_id || violation.id}
                 </span>
-                <StatusBadge status={violation.status} />
-                <Badge severity={violation.severity} />
-                {violation.violation_reason && <ReasonBadge reason={violation.violation_reason} />}
               </div>
               <p style={{ fontSize: 13, fontWeight: 500, color: "#1a1a18", margin: 0 }}>
                 {violation.description}
@@ -138,16 +171,19 @@ function DetailDrawer({ violation, onClose }) {
             <p style={{ fontSize: 10, fontWeight: 600, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.06em", margin: "0 0 10px" }}>
               AI 1 판단 근거
             </p>
-            {/* 상태 + 위반 사유 */}
             <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
               <div>
                 <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>상태</p>
-                <StatusBadge status={violation.status} />
+                <span style={{ fontSize: 11, color: "#1a1a18" }}>
+                  {STATUS_LABEL[violation.status]?.label ?? violation.status}
+                </span>
               </div>
               {violation.violation_reason && (
                 <div>
                   <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 4px" }}>위반 사유</p>
-                  <ReasonBadge reason={violation.violation_reason} />
+                  <span style={{ fontSize: 11, color: "#1a1a18" }}>
+                    {REASON_LABEL[violation.violation_reason]?.label ?? violation.violation_reason}
+                  </span>
                 </div>
               )}
             </div>
@@ -272,7 +308,8 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
               <XAxis type="number" tick={{ fontSize: 11, fill: "#73726c" }} />
               <YAxis dataKey="zone" type="category" tick={{ fontSize: 11, fill: "#73726c" }} width={40} />
               <Tooltip />
-              <Bar dataKey="count" fill="#378ADD" radius={[0, 4, 4, 0]} />
+              {/* Corporate 블루 — Critical 빨강과 구분, 집계 데이터임을 시각적으로 분리 */}
+              <Bar dataKey="count" fill="#4E87D4" radius={[0, 4, 4, 0]} barSize={12} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -287,7 +324,7 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              {["ID", "위험도", "상태", "위반 항목", "서버존", "신뢰도", "탐지 시각", ""].map((h) => (
+              {["ID", "위험도", "위반 유형", "위반 항목", "서버존", "연관 자산", "신뢰도", "탐지 시각", ""].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>
@@ -300,11 +337,12 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
                   {v.invariant_id || v.id}
                 </td>
                 <td style={td}><Badge severity={v.severity} /></td>
-                <td style={td}><StatusBadge status={v.status} /></td>
+                <td style={td}><ViolationTypeBadge reason={v.violation_reason} /></td>
                 <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {v.summary || v.description}
                 </td>
                 <td style={td}>{v.server_zone}</td>
+                <td style={td}><AssetChips assetIds={v.asset_ids} /></td>
                 <td style={td}><ConfidenceBar value={v.confidence} /></td>
                 <td style={td}>{formatDetectedAt(v.detected_at || v.created_at)}</td>
                 <td style={{ ...td, textAlign: "right" }}>

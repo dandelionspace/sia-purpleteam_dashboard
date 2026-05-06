@@ -26,7 +26,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, model_validator
 
-from scanner import run_scan, ai1_to_scan_detail, ai2_to_scan_detail
+from scanner import (
+    run_scan, ai1_to_scan_detail, ai2_to_scan_detail,
+    ensure_invariants_table, fetch_invariants_list, save_invariant_def,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,6 +61,30 @@ def _save_scan_list(scans: list) -> None:
     SCAN_LIST_FILE.write_text(
         json.dumps(scans, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def _upsert_scan_item(scans: list, item: dict) -> list:
+    """Insert or replace a scan item, keeping only one row per scan_id."""
+    scan_id = item.get("scan_id")
+    if not scan_id:
+        return scans
+
+    updated = [item]
+    updated.extend(s for s in scans if s.get("scan_id") != scan_id)
+    return updated
+
+
+def _dedupe_scan_list(scans: list) -> list:
+    """Keep the newest entry for each scan_id based on current list order."""
+    seen = set()
+    deduped = []
+    for scan in scans:
+        scan_id = scan.get("scan_id")
+        if not scan_id or scan_id in seen:
+            continue
+        seen.add(scan_id)
+        deduped.append(scan)
+    return deduped
 
 
 def _load_scan_detail(scan_id: str) -> Optional[dict]:
@@ -114,6 +141,7 @@ def _do_scan(scan_id: str) -> None:
         scan_detail = {
             "summary":              {"total_violations": 0, "critical_high": 0, "attack_chains": 0},
             "violations":           [],
+            "invariants":           [],
             "severityDistribution": [],
             "zoneViolations":       [],
             "typeViolations":       [],
@@ -131,9 +159,9 @@ def _do_scan(scan_id: str) -> None:
             "apiAssets":            [],
         }
 
-    # 목록에 추가 (최신이 앞에 오도록)
+    # /trigger에서 만든 running placeholder를 완료 결과로 교체한다.
     scans = _load_scan_list()
-    scans.insert(0, scan_item)
+    scans = _upsert_scan_item(scans, scan_item)
     _save_scan_list(scans)
     _save_scan_detail(scan_id, scan_detail)
     log.info("스캔 완료: %s (score=%s, violations=%s)",
@@ -147,6 +175,7 @@ def _do_scan(scan_id: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_storage()
+    ensure_invariants_table()
     # 저장된 스캔이 없으면 최초 스캔 한 번 자동 실행
     if not _load_scan_list():
         log.info("저장된 스캔 없음 — 초기 스캔 실행")
@@ -170,7 +199,11 @@ app.add_middleware(
 @app.get("/api/scans")
 def get_scans():
     """스캔 목록 반환 (최신 순)."""
-    return _load_scan_list()
+    scans = _load_scan_list()
+    deduped = _dedupe_scan_list(scans)
+    if len(deduped) != len(scans):
+        _save_scan_list(deduped)
+    return deduped
 
 
 @app.get("/api/scans/{scan_id}/details")
@@ -199,7 +232,7 @@ def trigger_scan(background_tasks: BackgroundTasks):
             "vulnerable_asset_count": 0, "patch_rate": 0,
         },
     }
-    scans.insert(0, placeholder)
+    scans = _upsert_scan_item(scans, placeholder)
     _save_scan_list(scans)
 
     background_tasks.add_task(_do_scan, scan_id)
@@ -249,6 +282,36 @@ def save_pentest_result(scan_id: str, result: RedTeamResult):
     detail["pentestResults"] = results
     _save_scan_detail(scan_id, detail)
     return {"status": "ok", "test_id": result.test_id}
+
+
+# ── 불변식 정의 관리 ─────────────────────────────────────────────────────────────
+
+@app.get("/api/invariants")
+def get_invariants():
+    """불변식 정의 목록 반환 (DB 기준, 실패 시 INVARIANT_META 폴백)."""
+    return fetch_invariants_list()
+
+
+class InvariantDefBody(BaseModel):
+    id:               str
+    description:      str
+    invariant_source: str  = "fixed"
+    category:         str  = ""
+    default_zone:     str  = ""
+    weight:           int  = 1
+    priority:         str  = "1개월"
+    remediation:      str  = ""
+
+
+@app.post("/api/invariants", status_code=201)
+def create_invariant(body: InvariantDefBody):
+    """새 불변식 정의를 DB에 저장 (id 충돌 시 upsert)."""
+    ok = save_invariant_def(
+        body.id, body.description, body.invariant_source,
+        body.category, body.default_zone, body.weight,
+        body.priority, body.remediation,
+    )
+    return {"status": "ok" if ok else "db_unavailable", "id": body.id}
 
 
 @app.get("/api/health")
@@ -322,8 +385,9 @@ def receive_ai1_results(bundle: AI1Bundle):
     if detail is None:
         raise HTTPException(status_code=404, detail=f"스캔 세부 데이터 없음: {latest_id}")
 
-    violated = [r.model_dump() for r in bundle.items if r.status == "violated"]
-    updated_detail, updated_item = ai1_to_scan_detail(detail, scans[0], violated)
+    all_results    = [r.model_dump() for r in bundle.items]
+    violated_count = sum(1 for r in all_results if r["status"] == "violated")
+    updated_detail, updated_item = ai1_to_scan_detail(detail, scans[0], all_results)
 
     # 스캔 목록 지표 갱신
     scans[0] = updated_item
@@ -331,8 +395,8 @@ def receive_ai1_results(bundle: AI1Bundle):
     _save_scan_detail(latest_id, updated_detail)
 
     log.info("AI 1 결과 수신: scan=%s, violated=%d/%d",
-             latest_id, len(violated), len(bundle.items))
-    return {"status": "ok", "scan_id": latest_id, "violated_count": len(violated)}
+             latest_id, violated_count, len(all_results))
+    return {"status": "ok", "scan_id": latest_id, "violated_count": violated_count}
 
 
 # ── AI 2 시나리오 수신 ──────────────────────────────────────────────────────────

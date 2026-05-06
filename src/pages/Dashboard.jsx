@@ -36,6 +36,7 @@ const SECTION_LABEL = {
   pentest:  "모의침투 결과",
   defense:  "방어 방안 및 보안 수준",
   asset:    "자산 관리",
+  scan:     "점검 관리",
 };
 
 // 보안 점수에 따른 색상 반환
@@ -50,6 +51,7 @@ export default function Dashboard() {
   const [activeNav, setActiveNav]           = useState("vuln");   // 현재 선택된 네비게이션 메뉴
   const [activeFilter, setActiveFilter]     = useState("전체");   // 현재 선택된 필터
   const [selectedScanId, setSelectedScanId] = useState(null);     // 현재 선택된 스캔 ID
+  const [hoveredNav, setHoveredNav]         = useState(null);     // hover 중인 메뉴 id
   const current = NAV_ITEMS.find((n) => n.id === activeNav);
 
   // 스캔 목록 조회 — React Query가 캐싱·재시도를 자동으로 처리
@@ -121,32 +123,32 @@ export default function Dashboard() {
 
   /* */
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", minHeight: "100vh", background: "#F8FAFC" }}>
 
       {/* 사이드바 */}
       <aside style={{
         width: 220,
-        minHeight: "100vh",         // 사이드바가 화면 전체 높이를 차지하도록 설정
-        background: "#042C53",
+        minHeight: "100vh",
+        background: "#0F172A",
         display: "flex",
         flexDirection: "column",
-        flexShrink: 0,              // 사이드바가 축소되지 않도록 설정
-        position: "sticky", top: 0, // 스크롤 시에도 사이드바가 화면 상단에 고정되도록 설정
+        flexShrink: 0,
+        position: "sticky", top: 0,
         height: "100vh",
       }}>
         {/* 로고 */}
         <div style={{ padding: "24px 20px 20px", borderBottom: "0.5px solid rgba(255,255,255,0.08)" }}>
           <p style={{ fontSize: 13, fontWeight: 500, color: "#fff", margin: 0, letterSpacing: "0.04em" }}>ARGOS</p>
-          <p style={{ fontSize: 10, color: "#73726c", margin: "2px 0 0" }}>Security Dashboard</p>
+          <p style={{ fontSize: 10, color: "#9CA3AF", margin: "2px 0 0" }}>Security Dashboard</p>
         </div>
 
-        {/* 현재 선택된 스캔 정보 — 점검 관리 페이지에서 스캔을 선택할 수 있음 */}
+        {/* 현재 선택된 스캔 정보 */}
         <div style={{ padding: "12px 20px", borderBottom: "0.5px solid rgba(255,255,255,0.08)" }}>
-          <p style={{ fontSize: 10, fontWeight: 500, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 6px" }}>
+          <p style={{ fontSize: 10, fontWeight: 500, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.07em", margin: "0 0 6px" }}>
             현재 스캔
           </p>
           {loadingList ? (
-            <p style={{ fontSize: 10, color: "#73726c", margin: 0 }}>로딩 중...</p>
+            <p style={{ fontSize: 10, color: "#9CA3AF", margin: 0 }}>로딩 중...</p>
           ) : listError ? (
             <p style={{ fontSize: 10, color: "#E05A5A", margin: 0 }}>불러오기 실패</p>
           ) : selectedScan ? (
@@ -155,14 +157,14 @@ export default function Dashboard() {
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#1D9E75", display: "inline-block", flexShrink: 0 }} />
                 <span style={{ fontSize: 11, color: "#fff", fontWeight: 500 }}>{selectedScan.scan_id}</span>
               </div>
-              <p style={{ fontSize: 10, color: "#73726c", margin: "0 0 2px 14px" }}>
+              <p style={{ fontSize: 10, color: "#9CA3AF", margin: "0 0 2px 14px" }}>
                 {new Date(selectedScan.scanned_at).toLocaleDateString("ko-KR")}
               </p>
               <p style={{ fontSize: 10, margin: "0 0 0 14px" }}>
                 <span style={{ color: scoreColor(selectedScan.metrics.score), fontWeight: 600 }}>
                   {selectedScan.metrics.score}점
                 </span>
-                <span style={{ color: "#73726c" }}> · {selectedScan.metrics.total_violations}건</span>
+                <span style={{ color: "#9CA3AF" }}> · {selectedScan.metrics.total_violations}건</span>
               </p>
             </>
           ) : null}
@@ -171,16 +173,24 @@ export default function Dashboard() {
         {/* 네비게이션 */}
         <nav style={{ padding: "12px", flex: 1 }}>
           {NAV_ITEMS.map((item) => {
-            const isActive = activeNav === item.id; // 현재 메뉴가 선택된 메뉴인지 확인
+            const isActive  = activeNav === item.id;
+            const isHovered = hoveredNav === item.id;
             return (
-              <button key={item.id} onClick={() => handleNavChange(item.id)} style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 10,
-                padding: "10px 12px", borderRadius: 8, border: "none", cursor: "pointer",
-                background: isActive ? "#185FA5" : "transparent",
-                color: isActive ? "#fff" : "#888780",
-                fontSize: 12, fontWeight: isActive ? 500 : 400,
-                marginBottom: 4, textAlign: "left",
-              }}>
+              <button
+                key={item.id}
+                onClick={() => handleNavChange(item.id)}
+                onMouseEnter={() => setHoveredNav(item.id)}
+                onMouseLeave={() => setHoveredNav(null)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 12px", borderRadius: 8, border: "none", cursor: "pointer",
+                  background: isActive ? "#3B82F6" : isHovered ? "rgba(255,255,255,0.06)" : "transparent",
+                  color: isActive ? "#FFFFFF" : "#9CA3AF",
+                  fontSize: 12, fontWeight: isActive ? 500 : 400,
+                  marginBottom: 4, textAlign: "left",
+                  transition: "background 0.15s",
+                }}
+              >
                 <span style={{ fontSize: 14 }}>{item.icon}</span>
                 {item.label}
               </button>
@@ -192,8 +202,8 @@ export default function Dashboard() {
         <div style={{ padding: "16px 12px", borderTop: "0.5px solid rgba(255,255,255,0.08)" }}>
           <button style={{
             width: "100%", padding: "8px 0", borderRadius: 8,
-            border: "0.5px solid rgba(255,255,255,0.15)", background: "#f4f4f4",
-            color: "#888780", fontSize: 11, cursor: "pointer",
+            border: "0.5px solid rgba(255,255,255,0.12)", background: "transparent",
+            color: "#9CA3AF", fontSize: 11, cursor: "pointer",
           }}>
             보고서 출력
           </button>
@@ -201,7 +211,7 @@ export default function Dashboard() {
       </aside>
 
       {/* 메인 콘텐츠 */}
-      <main style={{ flex: 1, minWidth: 0, padding: "32px 32px 64px" }}>
+      <main style={{ flex: 1, minWidth: 0, padding: "32px 32px 64px", background: "#F8FAFC" }}>
 
         {/* 페이지 헤더 — 우측에 현재 선택된 스캔 ID와 날짜 표시 */}
         <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>

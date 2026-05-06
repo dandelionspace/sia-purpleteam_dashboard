@@ -187,6 +187,24 @@ TACTIC_NAMES = {
     "TA0010": "데이터 탈취","TA0040": "영향",
 }
 
+# AI2가 영문 전체명으로 tactic을 전달할 때 tactic ID로 변환하는 역방향 매핑
+TACTIC_NAME_TO_ID = {
+    "Reconnaissance":        "TA0043",
+    "Resource Development":  "TA0042",
+    "Initial Access":        "TA0001",
+    "Execution":             "TA0002",
+    "Persistence":           "TA0003",
+    "Privilege Escalation":  "TA0004",
+    "Defense Evasion":       "TA0005",
+    "Credential Access":     "TA0006",
+    "Discovery":             "TA0007",
+    "Lateral Movement":      "TA0008",
+    "Collection":            "TA0009",
+    "Command and Control":   "TA0011",
+    "Exfiltration":          "TA0010",
+    "Impact":                "TA0040",
+}
+
 TECHNIQUE_NAMES = {
     "T1078": "유효한 계정 도용",     "T1190": "공개 취약점 악용",
     "T1110": "무차별 대입",          "T1059": "커맨드 인터프리터",

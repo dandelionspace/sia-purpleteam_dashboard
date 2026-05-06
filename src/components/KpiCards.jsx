@@ -28,7 +28,7 @@ export default function KpiCards({ summary, violations, activeFilter, attackChai
     : summary.critical_high;
 
   const chainCount = attackChains ? attackChains.length : summary.attack_chains;
-  const pentestSuccess = (pentestResults ?? []).filter((r) => r.result === "success").length;
+  const pentestSuccess = (pentestResults ?? []).filter((r) => r.overall_verdict === "reproduced").length;
 
   const cards = [
     { label: "총 불변식 위반", value: total, color: "#0C447C" },
@@ -40,7 +40,7 @@ export default function KpiCards({ summary, violations, activeFilter, attackChai
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
       {cards.map((card) => (
-        <div key={card.label} style={{ background: "#f5f5f3", borderRadius: 8, padding: "14px 16px" }}>
+        <div key={card.label} style={{ background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: "14px 16px" }}>
           <p style={{ fontSize: 12, color: "#73726c", marginBottom: 6 }}>{card.label}</p>
           <p style={{ fontSize: 24, fontWeight: 500, color: card.color, margin: 0 }}>{card.value}</p>
         </div>

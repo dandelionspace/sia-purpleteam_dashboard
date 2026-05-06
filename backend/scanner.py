@@ -22,6 +22,7 @@ from invariants import (
     SEVERITY_MAP,
     IP_PREFIX_TO_ZONE,
     TACTIC_NAMES,
+    TACTIC_NAME_TO_ID,
     TECHNIQUE_NAMES,
     enrich_violation,
 )
@@ -141,6 +142,185 @@ def _build_mitre_mapping_from_violations(violations: list) -> list:
     return result
 
 
+# ── DB 연결 헬퍼 ─────────────────────────────────────────────────────────────────
+
+def _db_connect():
+    return psycopg2.connect(
+        host=DB_HOST, database="argos_db",
+        user="argos_app", password=DB_PASS,
+        connect_timeout=5,
+    )
+
+
+# ── 불변식 정의 DB 관리 ──────────────────────────────────────────────────────────
+
+def ensure_invariants_table() -> None:
+    """
+    argos_db 에 invariants 테이블을 생성하고,
+    비어 있으면 INVARIANT_META 기준 초기 데이터를 시딩한다.
+    """
+    if not HAS_PSYCOPG2:
+        return
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS invariants (
+                id               VARCHAR(30)  PRIMARY KEY,
+                description      TEXT         NOT NULL,
+                invariant_source VARCHAR(20)  NOT NULL DEFAULT 'fixed',
+                category         VARCHAR(50),
+                default_zone     VARCHAR(50),
+                weight           INTEGER      DEFAULT 1,
+                priority         VARCHAR(20)  DEFAULT '1개월',
+                remediation      TEXT,
+                created_at       TIMESTAMPTZ  DEFAULT NOW()
+            )
+        """)
+        cur.execute("SELECT COUNT(*) FROM invariants")
+        count = cur.fetchone()[0]
+        if count == 0:
+            for inv_id, meta in INVARIANT_META.items():
+                cur.execute("""
+                    INSERT INTO invariants
+                        (id, description, invariant_source, category,
+                         default_zone, weight, priority, remediation)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                """, (
+                    inv_id,
+                    meta.get("description", ""),
+                    meta.get("invariant_source", "fixed"),
+                    meta.get("type", ""),
+                    meta.get("default_zone", ""),
+                    meta.get("weight", 1),
+                    meta.get("priority", "1개월"),
+                    meta.get("remediation", ""),
+                ))
+        conn.commit()
+        conn.close()
+        log.info("invariants 테이블 준비 완료 (기존 %d개)", count)
+    except Exception as e:
+        log.warning("invariants 테이블 초기화 실패: %s", e)
+
+
+def _fetch_invariant_defs() -> dict:
+    """
+    DB에서 불변식 정의를 {inv_id: meta_dict} 로 반환한다.
+    DB 연결 실패 시 INVARIANT_META 를 그대로 반환한다.
+    INVARIANT_META 에만 있는 추가 필드(mitre, attack_phase 등)는 병합 유지.
+    """
+    if not HAS_PSYCOPG2:
+        return INVARIANT_META
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT id, description, invariant_source, category,
+                   default_zone, weight, priority, remediation
+            FROM invariants ORDER BY id
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        if not rows:
+            return INVARIANT_META
+        result = {}
+        for (inv_id, desc, src, cat, zone, w, pri, rem) in rows:
+            base = INVARIANT_META.get(inv_id, {})
+            result[inv_id] = {
+                **base,
+                "description":      desc,
+                "invariant_source": src,
+                "type":             cat or "",
+                "default_zone":     zone or "",
+                "weight":           w or 1,
+                "priority":         pri or "1개월",
+                "remediation":      rem or "",
+            }
+        return result
+    except Exception as e:
+        log.warning("invariants DB fetch 실패: %s", e)
+        return INVARIANT_META
+
+
+def fetch_invariants_list() -> list:
+    """GET /api/invariants 용 — 정의 목록을 [{id, description, ...}] 형태로 반환."""
+    defs = _fetch_invariant_defs()
+    return [
+        {
+            "id":               inv_id,
+            "description":      meta.get("description", ""),
+            "invariant_source": meta.get("invariant_source", "fixed"),
+            "category":         meta.get("type", ""),
+            "default_zone":     meta.get("default_zone", ""),
+            "weight":           meta.get("weight", 1),
+            "priority":         meta.get("priority", "1개월"),
+            "remediation":      meta.get("remediation", ""),
+        }
+        for inv_id, meta in defs.items()
+    ]
+
+
+def save_invariant_def(inv_id: str, description: str, invariant_source: str,
+                       category: str, default_zone: str, weight: int,
+                       priority: str, remediation: str) -> bool:
+    """POST /api/invariants 용 — DB에 저장. 성공 여부 반환."""
+    if not HAS_PSYCOPG2:
+        return False
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            INSERT INTO invariants
+                (id, description, invariant_source, category,
+                 default_zone, weight, priority, remediation)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                description      = EXCLUDED.description,
+                invariant_source = EXCLUDED.invariant_source,
+                category         = EXCLUDED.category,
+                default_zone     = EXCLUDED.default_zone,
+                weight           = EXCLUDED.weight,
+                priority         = EXCLUDED.priority,
+                remediation      = EXCLUDED.remediation
+        """, (inv_id, description, invariant_source, category,
+              default_zone, weight, priority, remediation))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning("invariant 저장 실패 (%s): %s", inv_id, e)
+        return False
+
+
+def _build_initial_invariants(inv_defs: dict = None) -> list:
+    """
+    불변식 정의(DB 또는 INVARIANT_META) 기준으로
+    '미점검' 상태의 전체 불변식 목록을 생성한다.
+    """
+    defs = inv_defs if inv_defs is not None else _fetch_invariant_defs()
+    return [
+        {
+            "id":                         inv_id,
+            "description":                meta.get("description", ""),
+            "invariant_source":           meta.get("invariant_source", "fixed"),
+            "severity":                   None,
+            "status":                     "미점검",
+            "category":                   meta.get("type", ""),
+            "default_zone":               meta.get("default_zone", ""),
+            "weight":                     meta.get("weight", 1),
+            "priority":                   meta.get("priority", "1개월"),
+            "remediation":                meta.get("remediation", ""),
+            "confidence":                 0.0,
+            "violation_reason":           None,
+            "summary":                    "",
+            "current_environment_testable": False,
+            "testability_reason":         "",
+        }
+        for inv_id, meta in defs.items()
+    ]
+
+
 # ── PostgreSQL 자산 수집 ───────────────────────────────────────────────────────
 
 def _fetch_db_assets() -> list:
@@ -180,23 +360,54 @@ def _fetch_db_assets() -> list:
 
 # ── AI 1 결과 → scan_detail 갱신 ────────────────────────────────────────────────
 
-def ai1_to_scan_detail(detail: dict, scan_item: dict, violated_raw: list) -> tuple:
+def ai1_to_scan_detail(detail: dict, scan_item: dict, all_raw: list) -> tuple:
     """
-    AI 1 violated 항목(raw AI 1 형식)을 받아
+    AI 1 전체 결과(applied + violated)를 받아
     scan_detail과 scan_item(지표)을 갱신한 뒤 반환한다.
+    inv_defs는 DB에서 한 번만 조회해 violations와 invariants 양쪽에 사용한다.
     """
-    # 기존 violations 중 동일 invariant_id가 있으면 덮어쓰기, 없으면 추가
-    existing = {v.get("invariant_id", v.get("id", "")): v
-                for v in detail.get("violations", [])}
+    inv_defs     = _fetch_invariant_defs()
+    violated_raw = [r for r in all_raw if r.get("status") == "violated"]
 
+    # violations: violated 항목만, invariant_id 기준 upsert
+    existing_violations = {v.get("invariant_id", v.get("id", "")): v
+                           for v in detail.get("violations", [])}
     for raw in violated_raw:
         enriched = enrich_violation(raw)
-        inv_id   = enriched["invariant_id"]
-        existing[inv_id] = enriched
+        existing_violations[enriched["invariant_id"]] = enriched
+    violations = list(existing_violations.values())
 
-    violations = list(existing.values())
+    # invariants: applied + violated + 미점검, invariant_id 기준 upsert
+    # detail 에 이미 있으면 유지, 없으면 DB 기준 미점검 목록으로 초기화
+    existing_inv = {i.get("id", ""): i
+                    for i in (detail.get("invariants") or _build_initial_invariants(inv_defs))}
+    for raw in all_raw:
+        inv_id = raw.get("invariant_id", "")
+        if not inv_id or inv_id not in inv_defs:
+            continue
+        meta    = inv_defs[inv_id]
+        status  = raw.get("status", "미점검")
+        sev_raw = raw.get("severity", "medium")
+        existing_inv[inv_id] = {
+            "id":                         inv_id,
+            "description":                raw.get("summary", meta.get("description", "")),
+            "invariant_source":           meta.get("invariant_source", "fixed"),
+            "severity":                   SEVERITY_MAP.get(sev_raw.lower(), sev_raw.capitalize()) if status == "violated" else None,
+            "status":                     status,
+            "category":                   meta.get("type", ""),
+            "default_zone":               meta.get("default_zone", ""),
+            "weight":                     meta.get("weight", 1),
+            "priority":                   meta.get("priority", "1개월"),
+            "remediation":                meta.get("remediation", ""),
+            "confidence":                 raw.get("confidence", 0.0),
+            "violation_reason":           raw.get("violation_reason") if status == "violated" else None,
+            "summary":                    raw.get("summary", ""),
+            "current_environment_testable": raw.get("current_environment_testable", False),
+            "testability_reason":         raw.get("testability_reason", ""),
+        }
 
     detail["violations"]           = violations
+    detail["invariants"]           = list(existing_inv.values())
     detail["severityDistribution"] = _calc_severity_dist(violations)
     detail["zoneViolations"]       = _calc_zone_violations(violations)
     detail["typeViolations"]       = _calc_type_violations(violations)
@@ -210,9 +421,9 @@ def ai1_to_scan_detail(detail: dict, scan_item: dict, violated_raw: list) -> tup
     }
 
     score = _calc_score(violations)
-    scan_item["metrics"]["score"]           = score
+    scan_item["metrics"]["score"]            = score
     scan_item["metrics"]["total_violations"] = len(violations)
-    scan_item["metrics"]["critical_high"]   = detail["summary"]["critical_high"]
+    scan_item["metrics"]["critical_high"]    = detail["summary"]["critical_high"]
 
     return detail, scan_item
 
@@ -277,6 +488,7 @@ def run_scan(scan_id: str) -> tuple:
         "mitreMapping":         _build_mitre_mapping_from_violations([]),
         "pentestResults":       [],
         "coverage":             _calc_coverage([]),
+        "invariants":           _build_initial_invariants(),
         "assets":               assets,
         "assetHistory":         [],
         "assetEvents":          [],
