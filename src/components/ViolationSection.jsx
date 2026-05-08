@@ -115,7 +115,10 @@ function calcSeverityDist(list) {
 
 function calcZoneDist(list) {
   const counts = {};
-  list.forEach((v) => { counts[v.server_zone] = (counts[v.server_zone] || 0) + 1; });
+  list.forEach((v) => {
+    const z = v.zone || v.server_zone || "unknown";
+    counts[z] = (counts[z] || 0) + 1;
+  });
   return Object.entries(counts)
     .map(([zone, count]) => ({ zone, count }))
     .sort((a, b) => b.count - a.count);
@@ -324,7 +327,7 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              {["ID", "위험도", "위반 유형", "위반 항목", "서버존", "연관 자산", "신뢰도", "탐지 시각", ""].map((h) => (
+              {["ID", "위험도", "위반 유형", "위반 항목", "Zone", "연관 자산", "신뢰도", "탐지 시각", ""].map((h) => (
                 <th key={h} style={th}>{h}</th>
               ))}
             </tr>
@@ -341,7 +344,7 @@ export default function ViolationSection({ violations, activeFilter = "전체" }
                 <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {v.summary || v.description}
                 </td>
-                <td style={td}>{v.server_zone}</td>
+                <td style={td}>{v.zone || v.server_zone}</td>
                 <td style={td}><AssetChips assetIds={v.asset_ids} /></td>
                 <td style={td}><ConfidenceBar value={v.confidence} /></td>
                 <td style={td}>{formatDetectedAt(v.detected_at || v.created_at)}</td>

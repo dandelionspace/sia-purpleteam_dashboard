@@ -21,14 +21,16 @@ const SEVERITY_COLOR = {
   Low:      { bg: "#F0FDF9", text: "#276749" },
 };
 
-const CATEGORY_OPTIONS = ["접근제어", "보안정책", "네트워크", "권한"];
-const ZONE_OPTIONS     = ["운영", "DB", "관리", "배포", "개발", "DMZ", "서명", "보안", "IoT"];
-const PRIORITY_OPTIONS = ["즉시", "1주", "1개월"];
+const CATEGORY_OPTIONS     = ["접근제어", "보안정책", "네트워크", "권한"];
+const ZONE_OPTIONS         = ["운영", "DB", "관리", "배포", "개발", "DMZ", "서명", "보안", "IoT"];
+const SEVERITY_OPTIONS     = ["Critical", "High", "Medium", "Low"];
+const ATTACK_PHASE_OPTIONS = ["초기침투", "자격증명", "권한상승", "방어우회", "데이터탈취"];
 
 const EMPTY_FORM = {
   id: "", description: "", invariant_source: "fixed",
+  severity: "", attack_phase: "",
   category: "", default_zone: "", weight: 1,
-  remediation: "", priority: "1개월",
+  remediation: "",
 };
 
 function Badge({ severity }) {
@@ -86,7 +88,7 @@ function AddInvariantDrawer({ open, onClose, onAdd, existingIds }) {
   const handleSubmit = () => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
-    onAdd({ ...form, id: form.id.trim(), description: form.description.trim(), weight: Number(form.weight), status: "applied", severity: null });
+    onAdd({ ...form, id: form.id.trim(), description: form.description.trim(), weight: Number(form.weight), status: "미점검", severity: null });
     setForm(EMPTY_FORM);
     setErrors({});
     onClose();
@@ -176,6 +178,13 @@ function AddInvariantDrawer({ open, onClose, onAdd, existingIds }) {
             </Field>
           </div>
 
+          <Field label="공격 단계">
+            <select value={form.attack_phase} onChange={(e) => set("attack_phase", e.target.value)} style={inputStyle}>
+              <option value="">선택</option>
+              {ATTACK_PHASE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </Field>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Field label="가중치">
               <input
@@ -184,11 +193,6 @@ function AddInvariantDrawer({ open, onClose, onAdd, existingIds }) {
                 onChange={(e) => set("weight", e.target.value)}
                 style={inputStyle}
               />
-            </Field>
-            <Field label="조치 우선순위">
-              <select value={form.priority} onChange={(e) => set("priority", e.target.value)} style={inputStyle}>
-                {PRIORITY_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
             </Field>
           </div>
 
@@ -238,11 +242,12 @@ export default function InvariantSection({ invariants: propInvariants }) {
       id:               newInv.id,
       description:      newInv.description,
       invariant_source: newInv.invariant_source,
-      category:         newInv.category  || "",
+      severity:         newInv.severity     || "",
+      attack_phase:     newInv.attack_phase || "",
+      category:         newInv.category     || "",
       default_zone:     newInv.default_zone || "",
-      weight:           newInv.weight    ?? 1,
-      priority:         newInv.priority  || "1개월",
-      remediation:      newInv.remediation || "",
+      weight:           newInv.weight       ?? 1,
+      remediation:      newInv.remediation  || "",
     }).catch((e) => console.warn("불변식 저장 실패 (로컬에는 유지):", e));
   };
 
@@ -300,7 +305,7 @@ export default function InvariantSection({ invariants: propInvariants }) {
         <div style={card}>
           <p style={cardTitle}>카테고리별 현황</p>
           <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={categoryStats} layout="vertical" margin={{ left: 10, right: 20 }}>
+            <BarChart data={categoryStats} layout="vertical" margin={{ left: 10, right: 20 }} barSize={10}>
               <XAxis type="number" tick={{ fontSize: 11, fill: "#73726c" }} />
               <YAxis dataKey="category" type="category" tick={{ fontSize: 11, fill: "#73726c" }} width={52} />
               <Tooltip />

@@ -44,7 +44,7 @@ const ALL_TACTICS = [
 
 const getSeverity = (tech, violationList) => {
   if (!tech.violation_ids?.length) return null;
-  const linked = violationList.filter((v) => tech.violation_ids.includes(v.id));
+  const linked = violationList.filter((v) => tech.violation_ids.includes(v.invariant_id || v.id));
   return SEVERITY_ORDER.find((s) => linked.some((v) => v.severity === s)) || null;
 };
 
@@ -64,7 +64,7 @@ function MitreHeatmap({ mitreMapping, violations }) {
   };
 
   const linkedViolations = selected
-    ? violations.filter((v) => selected.violation_ids?.includes(v.id))
+    ? violations.filter((v) => selected.violation_ids?.includes(v.invariant_id || v.id))
     : [];
 
   return (
@@ -87,7 +87,7 @@ function MitreHeatmap({ mitreMapping, violations }) {
             {ALL_TACTICS.map((tac) => {
               const tacData    = tacticMap[tac.id];
               const techniques = (tacData?.techniques ?? []).filter(
-                (t) => t.violation_ids?.some((vid) => violations.some((v) => v.id === vid))
+                (t) => t.violation_ids?.some((vid) => violations.some((v) => (v.invariant_id || v.id) === vid))
               );
               return (
                 <div key={tac.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -155,20 +155,20 @@ function MitreHeatmap({ mitreMapping, violations }) {
             {linkedViolations.map((v) => {
               const sc = SEVERITY_BADGE[v.severity] || { bg: "#f1efea", text: "#73726c" };
               return (
-                <div key={v.id} style={{
+                <div key={v.invariant_id || v.id} style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "8px 10px", marginBottom: 6,
                   background: "#fff", border: "0.5px solid rgba(0,0,0,0.08)",
                   borderRadius: 6, fontSize: 12,
                 }}>
-                  <span style={{ fontWeight: 500, color: "#1a1a18", minWidth: 76, flexShrink: 0 }}>{v.id}</span>
+                  <span style={{ fontWeight: 500, color: "#1a1a18", minWidth: 76, flexShrink: 0 }}>{v.invariant_id || v.id}</span>
                   <span style={{ fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 99, background: sc.bg, color: sc.text, flexShrink: 0 }}>
                     {v.severity}
                   </span>
                   <span style={{ color: "#444", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {v.summary || v.description}
                   </span>
-                  <span style={{ color: "#73726c", flexShrink: 0 }}>{v.server_zone}</span>
+                  <span style={{ color: "#73726c", flexShrink: 0 }}>{v.zone || v.server_zone}</span>
                 </div>
               );
             })}
@@ -227,18 +227,18 @@ function TechniquesTab({ chain, violations }) {
 
   if (!invIds.length) return <p style={emptyText}>연결된 불변식 정보가 없습니다.</p>;
 
-  // violations 맵으로 빠르게 조회 — ID가 있으면 상세 데이터, 없으면 ID만 표시 (silent drop 방지)
-  const violationMap = Object.fromEntries(violations.map((v) => [v.id, v]));
-  const display = invIds.map((id) => violationMap[id] ?? { id, severity: null, summary: "", type: "", attack_phase: "" });
+  // violations 맵으로 빠르게 조회 — invariant_id 기준, 없으면 ID만 표시 (silent drop 방지)
+  const violationMap = Object.fromEntries(violations.map((v) => [v.invariant_id || v.id, v]));
+  const display = invIds.map((id) => violationMap[id] ?? { invariant_id: id, id, severity: null, summary: "", type: "", attack_phase: "" });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {display.map((item) => {
         const sc = item.severity ? (SEVERITY_BADGE[item.severity] || {}) : { bg: "#f1efea", text: "#73726c" };
         return (
-          <div key={item.id} style={{ border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: "10px 12px", background: "#fafbfc" }}>
+          <div key={item.invariant_id || item.id} style={{ border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: "10px 12px", background: "#fafbfc" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#0C447C", fontFamily: "monospace" }}>{item.id}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#0C447C", fontFamily: "monospace" }}>{item.invariant_id || item.id}</span>
               {item.severity && (
                 <span style={{ fontSize: 10, fontWeight: 500, background: sc.bg, color: sc.text, padding: "1px 7px", borderRadius: 99 }}>{item.severity}</span>
               )}
@@ -275,7 +275,7 @@ function ProceduresTab({ guide }) {
             }}>
               {i + 1}
             </span>
-            <span style={{ fontSize: 12, fontWeight: 500, color: "#1a1a18" }}>{step}</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: "#1a1a18" }}>{step?.text ?? step}</span>
           </div>
           {/* 성공 기준이 있으면 해당 인덱스 표시 */}
           {guide.success_criteria?.[i] && (

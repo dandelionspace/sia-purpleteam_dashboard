@@ -105,8 +105,8 @@ export default function DefenseSection({ coverage, scoreHistory, remediations: i
             ) : remediations.map((r, idx) => {
               const ps = PRIORITY_STYLE[r.priority] || {};
               return (
-                <tr key={r.violation_id} style={{ opacity: r.done ? 0.4 : 1 }}>
-                  <td style={td}>{r.violation_id}</td>
+                <tr key={r.invariant_id} style={{ opacity: r.done ? 0.4 : 1 }}>
+                  <td style={td}>{r.invariant_id}</td>
                   <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: r.done ? "line-through" : "none" }}>{r.description}</td>
                   <td style={td}>{r.attack_phase}</td>
                   <td style={td}>

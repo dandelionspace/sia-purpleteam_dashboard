@@ -104,22 +104,43 @@ export default function Dashboard() {
   const selectedScan = scanListData.find((s) => s.scan_id === selectedScanId);
 
   // currentDetails가 없을 때 빈 기본값 — 컴포넌트 구조는 항상 렌더링
-  const violations        = currentDetails?.violations           ?? [];
-  const attackChains      = currentDetails?.attackChains         ?? [];
-  const mitreMapping      = currentDetails?.mitreMapping         ?? [];
-  const pentestResults    = currentDetails?.pentestResults       ?? [];
-  const coverage          = currentDetails?.coverage             ?? {};
-  const remediations      = currentDetails?.remediations         ?? [];
-  const assets            = currentDetails?.assets               ?? [];
-  const assetHistory      = currentDetails?.assetHistory         ?? [];
-  const assetEvents       = currentDetails?.assetEvents          ?? [];
-  const assetPolicies     = currentDetails?.assetPolicies        ?? [];
-  const softwareAssets    = currentDetails?.softwareAssets       ?? [];
-  const credentialAssets  = currentDetails?.credentialAssets     ?? [];
-  const apiAssets         = currentDetails?.apiAssets            ?? [];
-  const summary           = currentDetails?.summary              ?? { total_violations: 0, critical_high: 0, attack_chains: 0 };
+  const violations        = currentDetails?.violations      ?? [];
+  const attackChains      = currentDetails?.attackChains    ?? [];
+  const mitreMapping      = currentDetails?.mitreMapping    ?? [];
+  const pentestResults    = currentDetails?.pentestResults  ?? [];
+  const coverage          = currentDetails?.coverage        ?? {};
+  const remediations      = currentDetails?.remediations    ?? [];
+  const assets            = currentDetails?.assets          ?? [];
+  const services          = currentDetails?.services        ?? [];
+  const evidenceEvents    = currentDetails?.evidenceEvents  ?? [];
+  const invariantImpact   = currentDetails?.invariantImpact ?? [];
+  const summary           = currentDetails?.summary         ?? { total_violations: 0, critical_high: 0, attack_chains: 0 };
   // mock 모드에서는 로컬 불변식 데이터를 기본값으로, 실제 API 모드에서는 빈 배열
-  const invariantsData    = currentDetails?.invariants           ?? (USE_MOCK ? localInvariants : []);
+  const invariantsData    = currentDetails?.invariants      ?? (USE_MOCK ? localInvariants : []);
+
+  // 자산 추이: scan_asset_snapshot JOIN 결과를 scanListData에서 스캔 단위로 파생
+  // 활성 테이블(scans + scan_asset_snapshot) 기반
+  // new_assets: 직전 스캔 대비 asset_count 증가분 (scan_asset_snapshot에 신규 자산 컬럼 없으므로 파생)
+  const _sortedScans = [...scanListData].sort((a, b) => new Date(a.scanned_at) - new Date(b.scanned_at));
+  const assetHistory = _sortedScans.map((s, i) => {
+    const prev       = _sortedScans[i - 1];
+    const new_assets = prev ? Math.max(0, (s.asset_count ?? 0) - (prev.asset_count ?? 0)) : 0;
+    return {
+      date:           new Date(s.scanned_at).toLocaleDateString("ko-KR", { month: "short", day: "numeric" }),
+      scan_id:        s.scan_id,
+      total:          s.asset_count           ?? 0,
+      unregistered:   s.unregistered_count     ?? 0,
+      with_violation: s.with_violation_count   ?? 0,
+      new_assets,
+    };
+  });
+
+  // 비활성 테이블 관련 props — 주석으로 보존 (데이터 없어도 화면 동작)
+  // const assetEvents      = currentDetails?.assetEvents      ?? [];  // [비활성] asset_events
+  // const assetPolicies    = currentDetails?.assetPolicies    ?? [];  // [비활성] invariant_impact
+  // const softwareAssets   = currentDetails?.softwareAssets   ?? [];  // [비활성] software_assets
+  // const credentialAssets = currentDetails?.credentialAssets ?? [];  // [비활성] credential_assets
+  // const apiAssets        = currentDetails?.apiAssets        ?? [];  // [비활성] api_assets
 
   /* */
   return (
@@ -161,10 +182,10 @@ export default function Dashboard() {
                 {new Date(selectedScan.scanned_at).toLocaleDateString("ko-KR")}
               </p>
               <p style={{ fontSize: 10, margin: "0 0 0 14px" }}>
-                <span style={{ color: scoreColor(selectedScan.metrics.score), fontWeight: 600 }}>
-                  {selectedScan.metrics.score}점
+                <span style={{ color: scoreColor(selectedScan.score), fontWeight: 600 }}>
+                  {selectedScan.score}점
                 </span>
-                <span style={{ color: "#9CA3AF" }}> · {selectedScan.metrics.total_violations}건</span>
+                <span style={{ color: "#9CA3AF" }}> · {selectedScan.total_violations}건</span>
               </p>
             </>
           ) : null}
@@ -341,7 +362,7 @@ export default function Dashboard() {
 
             {current.sections.includes("pentest") && (
               <div style={{ marginBottom: 32 }}>
-                <PentestSection pentestResults={pentestResults} scanId={selectedScanId} />
+                <PentestSection pentestResults={pentestResults} scanId={selectedScanId} attackChains={attackChains} />
               </div>
             )}
 
@@ -352,7 +373,7 @@ export default function Dashboard() {
                   scoreHistory={scanListData.map((s) => ({
                     scan_id: s.scan_id,
                     scanned_at: s.scanned_at,
-                    score: s.metrics.score,
+                    score: s.score,
                   }))}
                   remediations={remediations} />
               </div>
@@ -363,11 +384,16 @@ export default function Dashboard() {
                 <AssetSection
                   assets={assets}
                   assetHistory={assetHistory}
-                  assetEvents={assetEvents}
-                  assetPolicies={assetPolicies}
-                  softwareAssets={softwareAssets}
-                  credentialAssets={credentialAssets}
-                  apiAssets={apiAssets} />
+                  services={services}
+                  evidenceEvents={evidenceEvents}
+                  invariantImpact={invariantImpact}
+                  // 비활성 props (schema.sql 주석 처리된 테이블 — 필요 시 활성화)
+                  // assetEvents={assetEvents}
+                  // assetPolicies={assetPolicies}
+                  // softwareAssets={softwareAssets}
+                  // credentialAssets={credentialAssets}
+                  // apiAssets={apiAssets}
+                />
               </div>
             )}
           </>

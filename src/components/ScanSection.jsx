@@ -248,20 +248,22 @@ export default function ScanSection({ scanList, selectedScanId, onSelectScan, on
                   <td style={td}>
                     {isRunning ? (
                       <span style={{ fontSize: 11, color: "#E8A838" }}>진행 중</span>
+                    ) : scan.status === "failed" ? (
+                      <span style={{ fontSize: 11, color: "#E05A5A", fontWeight: 500 }}>실패</span>
                     ) : (
-                      <span style={{ fontSize: 14, fontWeight: 600, color: scoreColor(scan.metrics.score) }}>
-                        {scan.metrics.score}
+                      <span style={{ fontSize: 14, fontWeight: 600, color: scoreColor(scan.score) }}>
+                        {scan.score}
                       </span>
                     )}
                   </td>
                   <td style={td}>
                     <span style={{ fontSize: 12, color: "#1a1a18" }}>
-                      {isRunning ? "—" : `${scan.metrics.total_violations}건`}
+                      {isRunning ? "—" : `${scan.total_violations}건`}
                     </span>
                   </td>
                   <td style={td}>
                     <span style={{ fontSize: 12, color: "#1a1a18" }}>
-                      {isRunning ? "—" : `${scan.metrics.critical_high}건`}
+                      {isRunning ? "—" : `${scan.critical_high}건`}
                     </span>
                   </td>
                   <td style={td}>
