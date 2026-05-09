@@ -37,7 +37,10 @@ from invariants import (
 
 log = logging.getLogger("scanner")
 
-DB_HOST = os.getenv("DB_HOST",     "10.10.4.2")
+DB_HOST = os.getenv("DB_HOST", "10.10.4.2")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "argos_security")
+DB_USER = os.getenv("DB_USER", "argos_app")
 DB_PASS = os.getenv("DB_PASSWORD", "")
 
 # ── 지표 계산 ─────────────────────────────────────────────────────────────────
@@ -160,41 +163,94 @@ def _build_mitre_mapping_from_chains(attack_chains: list, violations: list) -> l
     return result
 
 
-def _build_mitre_mapping_from_violations(violations: list) -> list:
-    tactic_tech: dict = {}
+def _fetch_scan_mitre_tactic_map(scan_id: str) -> dict:
+    """scan_mitre_tactic_map 테이블에서 AI Pack이 생성한 전술-불변식 매핑을 조회한다."""
+    if not HAS_PSYCOPG2:
+        return {}
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT tactic_id, invariant_id, mapping_basis
+            FROM scan_mitre_tactic_map
+            WHERE scan_id = %s
+        """, (scan_id,))
+        rows = cur.fetchall()
+        conn.close()
+        result = {}
+        for (tactic_id, invariant_id, mapping_basis) in rows:
+            if tactic_id not in result:
+                result[tactic_id] = {"invariant_ids": [], "mapping_basis": mapping_basis or ""}
+            result[tactic_id]["invariant_ids"].append(invariant_id)
+        return result
+    except Exception as e:
+        log.warning("scan_mitre_tactic_map fetch 실패: %s", e)
+        return {}
+
+
+def _build_mitre_mapping(violations: list, tactic_map: dict = None) -> list:
+    """violations의 mitre_tactic 필드와 scan_mitre_tactic_map을 모두 활용해 MITRE 매핑을 빌드한다."""
+    inv_severity = {v.get("invariant_id", ""): v.get("severity", "Low") for v in violations}
+
+    # violation 필드 기반 (백엔드가 mitre_tactic을 채워줄 경우)
+    tactic_data: dict = {}
     for v in violations:
         tid  = v.get("mitre_tactic", "")
         tech = v.get("mitre_technique", "")
-        if not tid:
+        inv_id = v.get("invariant_id", v.get("id", ""))
+        if not tid or not inv_id:
             continue
-        tactic_tech.setdefault(tid, {})\
-            .setdefault(tech, {"violation_ids": [], "severity": v["severity"]})\
-            ["violation_ids"].append(v.get("invariant_id", v.get("id", "")))
+        bucket = tactic_data.setdefault(tid, {"violated_invariants": [], "techniques": {}})
+        if inv_id not in bucket["violated_invariants"]:
+            bucket["violated_invariants"].append(inv_id)
+        if tech:
+            t = bucket["techniques"].setdefault(tech, {"violation_ids": [], "severity": v.get("severity", "Low")})
+            if inv_id not in t["violation_ids"]:
+                t["violation_ids"].append(inv_id)
+
+    # scan_mitre_tactic_map 기반 (AI Pack이 생성한 전술-불변식 매핑)
+    if tactic_map:
+        for tactic_id, data in tactic_map.items():
+            bucket = tactic_data.setdefault(tactic_id, {"violated_invariants": [], "techniques": {}})
+            for inv_id in data.get("invariant_ids", []):
+                if inv_id not in bucket["violated_invariants"]:
+                    bucket["violated_invariants"].append(inv_id)
 
     result = []
     for tactic_id, tactic_name in TACTIC_NAMES.items():
-        techniques = []
-        for tech_id, data in tactic_tech.get(tactic_id, {}).items():
-            techniques.append({
+        bucket = tactic_data.get(tactic_id, {})
+        violated_invariants = bucket.get("violated_invariants", [])
+        techniques = [
+            {
                 "technique_id": tech_id,
                 "name":          TECHNIQUE_NAMES.get(tech_id, tech_id),
-                "severity":      data["severity"],
-                "violation_ids": data["violation_ids"],
-            })
+                "severity":      t_data["severity"],
+                "violation_ids": t_data["violation_ids"],
+            }
+            for tech_id, t_data in bucket.get("techniques", {}).items()
+        ]
         result.append({
-            "tactic_id":   tactic_id,
-            "tactic_name": tactic_name,
-            "techniques":  techniques,
+            "tactic_id":          tactic_id,
+            "tactic_name":        tactic_name,
+            "violated_invariants": violated_invariants,
+            "techniques":         techniques,
         })
     return result
+
+
+def _build_mitre_mapping_from_violations(violations: list) -> list:
+    return _build_mitre_mapping(violations, tactic_map=None)
 
 
 # ── DB 연결 헬퍼 ─────────────────────────────────────────────────────────────────
 
 def _db_connect():
     return psycopg2.connect(
-        host=DB_HOST, database="argos_security",
-        user="argos_app", password=DB_PASS,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS,
         connect_timeout=5,
     )
 
@@ -1251,7 +1307,8 @@ def ai1_to_scan_detail(detail: dict, scan_item: dict, all_raw: list) -> tuple:
         sev_raw = raw.get("severity", "medium")
         existing_inv[inv_id] = {
             "id":                         inv_id,
-            "description":                raw.get("summary", meta.get("description", "")),
+            "description":                meta.get("description", ""),
+            "evaluation_status":          status,
             "invariant_source":           meta.get("invariant_source", "fixed"),
             "severity":                   SEVERITY_MAP.get(sev_raw.lower(), sev_raw.capitalize()) if status == "violated" else None,
             "status":                     status,
@@ -1275,7 +1332,8 @@ def ai1_to_scan_detail(detail: dict, scan_item: dict, all_raw: list) -> tuple:
     detail["coverage"]             = _calc_coverage(violations)
     remediations                   = _build_remediations(violations)
     detail["remediations"]         = remediations
-    detail["mitreMapping"]         = _build_mitre_mapping_from_violations(violations)
+    tactic_map = _fetch_scan_mitre_tactic_map(scan_id)
+    detail["mitreMapping"]         = _build_mitre_mapping(violations, tactic_map)
     detail["summary"] = {
         "total_violations": len(violations),
         "critical_high":    sum(1 for v in violations if v["severity"] in ("Critical", "High")),

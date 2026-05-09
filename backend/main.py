@@ -43,6 +43,7 @@ from scanner import (
     _save_scan_to_db, save_pentest_to_db,
     HAS_PSYCOPG2,
 )
+from ingestion import ingest_dashboard_export
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +55,7 @@ log = logging.getLogger("argos-api")
 DATA_DIR        = Path(os.getenv("SCAN_DATA_DIR", "/data"))
 SCAN_LIST_FILE  = DATA_DIR / "scans.json"
 SCAN_DETAIL_DIR = DATA_DIR / "scan_details"
+INGEST_STATUS_FILE = DATA_DIR / "ingest_status.json"
 
 
 def _init_storage() -> None:
@@ -90,6 +92,21 @@ def _file_save_scan_detail(scan_id: str, detail: dict) -> None:
     path = SCAN_DETAIL_DIR / f"{scan_id}.json"
     path.write_text(
         json.dumps(detail, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _file_load_ingest_status() -> dict:
+    if not INGEST_STATUS_FILE.exists():
+        return {"status": "setup_required", "message": "No AI Pack DB ingestion export has been ingested yet."}
+    try:
+        return json.loads(INGEST_STATUS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "unknown", "message": "Unable to read ingest status."}
+
+
+def _file_save_ingest_status(status: dict) -> None:
+    INGEST_STATUS_FILE.write_text(
+        json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -290,7 +307,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Argos Dashboard API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="PurpleTeam Dashboard API", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -324,6 +341,7 @@ def get_scan_details(scan_id: str):
 @app.post("/api/scans/trigger", status_code=202)
 def trigger_scan(background_tasks: BackgroundTasks):
     """새 스캔을 백그라운드에서 실행한다. 즉시 scan_id 를 반환한다."""
+    # TODO: 운영 환경에서는 이 엔드포인트 앞단에서 인증/권한 체크가 필요하다.
     scans   = _load_scan_list()
     scan_id = _next_scan_id(scans)
 
@@ -344,6 +362,21 @@ def trigger_scan(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_do_scan, scan_id)
     return {"scan_id": scan_id, "status": "running"}
+
+
+@app.post("/api/ingest/db-ingestion", status_code=200)
+def ingest_db_ingestion_export(export: dict):
+    """
+    AI Pack dashboard-db-ingestion-export.json 또는 내부 central_api 응답을 받아
+    PostgreSQL 테이블에 upsert한다. UI는 이 export를 직접 렌더링하지 않는다.
+    """
+    result = ingest_dashboard_export(export)
+    _file_save_ingest_status(result)
+    if result["status"] == "failed":
+        raise HTTPException(status_code=500, detail=result)
+    if result["status"] == "db_unavailable":
+        raise HTTPException(status_code=503, detail=result)
+    return result
 
 
 class TargetAsset(BaseModel):
@@ -427,11 +460,16 @@ def create_invariant(body: InvariantDefBody):
 @app.get("/api/health")
 def health():
     scans = _load_scan_list()
+    ingest_status = _file_load_ingest_status()
     return {
         "status":      "ok",
-        "service":     "argos-dashboard-api",
+        "service":     "purpleteam-dashboard-api",
         "total_scans": len(scans),
-        "db_mode":     "postgresql" if HAS_PSYCOPG2 else "file_fallback",
+        "postgresql": {
+            "status": "connected" if HAS_PSYCOPG2 else "unavailable",
+            "mode": "postgresql" if HAS_PSYCOPG2 else "file_fallback",
+        },
+        "ai_pack_ingest": ingest_status,
     }
 
 

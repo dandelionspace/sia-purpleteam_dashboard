@@ -1,53 +1,112 @@
 import axios from "axios";
-import { scanList as mockScanList, scanDetails as mockScanDetails } from "../data/dummyData";
-import { invariants as mockInvariants } from "../data/invariantsData";
+import sampleHealth from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-health.json";
+import sampleScanDetail from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-scan-detail-ai-run-20260508-075702.json";
+import sampleScans from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-scans.json";
+import { adaptScanDetail, adaptScanList } from "./aiPackAdapter";
 
-// VITE_API_BASE_URL이 설정되지 않으면 mock 데이터를 사용합니다.
-export const USE_MOCK = !import.meta.env.VITE_API_BASE_URL;
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+export const AI_PACK_API_BASE_URL = import.meta.env.VITE_AI_PACK_API_BASE_URL || "";
+export const ACTIVE_API_BASE_URL = API_BASE_URL || "";
+
+export const USE_MOCK = !ACTIVE_API_BASE_URL;
+
+const mockScans = adaptScanList(sampleScans);
+const mockDetails = Object.fromEntries(mockScans.map((scan) => [
+  scan.scan_id,
+  scan.scan_id === "ai-run-20260508-075702"
+    ? sampleScanDetail
+    : { ...sampleScanDetail, scan_id: scan.scan_id, scanned_at: scan.scanned_at, status: scan.status, summary: scan },
+]));
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api",
+  baseURL: ACTIVE_API_BASE_URL || "/api",
   timeout: 30000,
   headers: { "Content-Type": "application/json" },
 });
 
-// 인증 토큰 자동 첨부 — localStorage에 "auth_token"이 있을 경우 Authorization 헤더에 추가
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("auth_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-export const fetchScanList = () => {
-  if (USE_MOCK) return Promise.resolve(mockScanList);
-  return api.get("/scans").then((r) => r.data);
-};
+export async function fetchHealth() {
+  if (USE_MOCK) {
+    return {
+      ...sampleHealth,
+      status: "mock",
+      source: "purpleteam_backend_fixture",
+      message: "Set VITE_API_BASE_URL to connect the PurpleTeam backend API.",
+    };
+  }
+  const response = await api.get("/health");
+  return response.data;
+}
 
-export const fetchScanDetails = (scanId) => {
-  if (USE_MOCK) return Promise.resolve(mockScanDetails[scanId] ?? null);
-  return api.get(`/scans/${scanId}/details`).then((r) => r.data);
-};
+export async function fetchScanList() {
+  if (USE_MOCK) return mockScans;
+  const response = await api.get("/scans");
+  return adaptScanList(response.data);
+}
 
-// 새 스캔 트리거 — 백엔드가 즉시 scan_id를 반환하고 백그라운드에서 실행
-export const triggerScan = () => {
-  if (USE_MOCK) return Promise.resolve({ scan_id: null, status: "mock" });
-  return api.post("/scans/trigger").then((r) => r.data);
-};
+export async function fetchScanDetails(scanId, scanContext = null) {
+  const scan = scanContext ?? mockScans.find((item) => item.scan_id === scanId);
+  if (USE_MOCK) return adaptScanDetail(mockDetails[scanId] ?? sampleScanDetail, { scanId, scan });
+  const response = await api.get(`/scans/${scanId}/details`);
+  return adaptScanDetail(response.data, { scanId });
+}
 
-// Red Team 결과 저장 — test_id 기준으로 upsert
-export const savePentestResult = (scanId, result) => {
-  if (USE_MOCK) return Promise.resolve({ status: "ok" });
-  return api.post(`/scans/${scanId}/pentest`, result).then((r) => r.data);
-};
+export async function triggerScan() {
+  if (USE_MOCK) return { scan_id: null, status: "mock" };
+  // TODO: production deployments must enforce authz on the backend before this job runs.
+  const response = await api.post("/scans/trigger");
+  return response.data;
+}
 
-// 불변식 정의 목록 조회
-export const fetchInvariants = () => {
-  if (USE_MOCK) return Promise.resolve(mockInvariants);
-  return api.get("/invariants").then((r) => r.data);
-};
+export async function savePentestResult(scanId, result) {
+  const payload = {
+    ...result,
+    target_assets: normalizeTargetAssets(result.target_assets),
+  };
+  if (USE_MOCK) return { status: "ok", result: payload };
+  const response = await api.post(`/scans/${scanId}/pentest`, payload);
+  return response.data;
+}
 
-// 불변식 정의 추가/upsert
-export const createInvariant = (def) => {
-  if (USE_MOCK) return Promise.resolve({ status: "ok", id: def.id });
-  return api.post("/invariants", def).then((r) => r.data);
-};
+export async function fetchInvariants() {
+  if (USE_MOCK) {
+    const details = await fetchScanDetails(mockScans[0]?.scan_id);
+    return details?.invariants ?? [];
+  }
+  const response = await api.get("/invariants");
+  return response.data;
+}
+
+export async function createInvariant(definition) {
+  const payload = {
+    ...definition,
+    id: definition.id ?? definition.invariant_id,
+    description: definition.description ?? definition.title ?? "",
+    invariant_source: definition.invariant_source ?? definition.source ?? "custom",
+    severity: definition.severity ?? "Medium",
+    attack_phase: definition.attack_phase ?? "",
+    category: definition.category ?? "",
+    default_zone: definition.default_zone ?? "",
+    weight: definition.weight ?? 1,
+    remediation: definition.remediation ?? "",
+  };
+  if (USE_MOCK) return { status: "ok", id: payload.id };
+  const response = await api.post("/invariants", payload);
+  return response.data;
+}
+
+function normalizeTargetAssets(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (typeof item === "string") return { asset_id: item, asset_type: "unknown" };
+    return {
+      asset_id: item.asset_id ?? item.id,
+      asset_type: item.asset_type ?? item.type ?? "unknown",
+    };
+  }).filter((item) => item.asset_id);
+}

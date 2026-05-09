@@ -20,7 +20,9 @@
 CREATE TABLE invariants (
     invariant_id        VARCHAR     PRIMARY KEY,   -- INV-STD-01~14, INV-ARG-01~08
     description         TEXT        NOT NULL,
-    invariant_source    VARCHAR     NOT NULL       CHECK (invariant_source IN ('fixed', 'variable')),
+    invariant_source    VARCHAR     NOT NULL       CHECK (invariant_source IN ('fixed', 'variable', 'custom')),
+    state               VARCHAR     DEFAULT 'active' CHECK (state IN ('active', 'disabled', 'draft')),
+    approval_status     VARCHAR     DEFAULT 'approved' CHECK (approval_status IN ('approved', 'draft')),
     severity            VARCHAR                    CHECK (severity IN ('Critical', 'High', 'Medium', 'Low')),
     default_zone        VARCHAR,                   -- ops | dmz | db | deploy | security
     category            VARCHAR,                   -- 접근제어 | 권한 | 보안정책 | 네트워크
@@ -381,6 +383,94 @@ CREATE TABLE remediations (
 );
 
 CREATE INDEX idx_remediations_scan ON remediations (scan_id);
+
+
+-- =============================================================================
+-- GROUP 9. AI Pack 생성 스캔 단위 MITRE 전술-불변식 매핑
+-- AI Pack의 mitre_flow_invariants export를 저장한다.
+-- 기존 mitre_flow_invariants(체인 단위)와 구조가 달라 별도 테이블로 관리.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS scan_mitre_tactic_map (
+    id              SERIAL      PRIMARY KEY,
+    scan_id         VARCHAR     NOT NULL REFERENCES scans(scan_id),
+    tactic_id       VARCHAR     NOT NULL,
+    invariant_id    VARCHAR     NOT NULL REFERENCES invariants(invariant_id),
+    mapping_basis   TEXT,
+    UNIQUE (scan_id, tactic_id, invariant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_mitre_tactic_scan ON scan_mitre_tactic_map (scan_id);
+
+
+-- =============================================================================
+-- GROUP 8.1 운영 대시보드 집계 테이블
+-- AI Pack DB ingestion export가 이미 계산한 집계값을 저장한다.
+-- 프론트는 이 테이블을 직접 보지 않고 /api/scans/{scan_id}/details 응답만 사용한다.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS scan_severity_distribution (
+    scan_id     VARCHAR NOT NULL REFERENCES scans(scan_id),
+    severity    VARCHAR NOT NULL CHECK (severity IN ('Critical', 'High', 'Medium', 'Low')),
+    count       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scan_id, severity)
+);
+
+CREATE TABLE IF NOT EXISTS scan_zone_violations (
+    scan_id VARCHAR NOT NULL REFERENCES scans(scan_id),
+    zone    VARCHAR NOT NULL,
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scan_id, zone)
+);
+
+CREATE TABLE IF NOT EXISTS scan_type_violations (
+    scan_id     VARCHAR NOT NULL REFERENCES scans(scan_id),
+    type_name   VARCHAR NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scan_id, type_name)
+);
+
+CREATE TABLE IF NOT EXISTS scan_coverage (
+    scan_id         VARCHAR NOT NULL REFERENCES scans(scan_id),
+    attack_phase    VARCHAR NOT NULL,
+    total_weight    INTEGER,
+    violated_weight INTEGER,
+    coverage_pct    INTEGER,
+    PRIMARY KEY (scan_id, attack_phase)
+);
+
+CREATE TABLE IF NOT EXISTS asset_events (
+    event_id    VARCHAR     PRIMARY KEY,
+    event_type  VARCHAR,
+    asset_id    VARCHAR     REFERENCES assets(asset_id),
+    asset_name  VARCHAR,
+    description TEXT,
+    zone        VARCHAR,
+    occurred_at TIMESTAMPTZ,
+    severity    VARCHAR CHECK (severity IN ('Critical', 'High', 'Medium', 'Low'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_events_asset ON asset_events (asset_id);
+CREATE INDEX IF NOT EXISTS idx_asset_events_time  ON asset_events (occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS asset_history_monthly (
+    id                  SERIAL      PRIMARY KEY,
+    date_label          VARCHAR     NOT NULL,
+    period_start        DATE        NOT NULL UNIQUE,
+    total               INTEGER,
+    vulnerable          INTEGER,
+    vulnerable_hw       INTEGER,
+    vulnerable_sw       INTEGER,
+    vulnerable_cred     INTEGER,
+    vulnerable_api      INTEGER,
+    offline             INTEGER,
+    patch_pct           INTEGER,
+    patch_pct_hw        INTEGER,
+    patch_pct_sw        INTEGER,
+    unregistered        INTEGER,
+    new_assets          INTEGER,
+    policy_violations   INTEGER
+);
 
 
 -- =============================================================================

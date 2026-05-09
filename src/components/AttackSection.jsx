@@ -1,29 +1,13 @@
 import { useState } from "react";
+import { Badge, ChipList, SectionTitle } from "./common";
 
-// ── 상수 ────────────────────────────────────────────────────────────────────
-
-// risk_level → 위험도 숫자 매핑
-const RISK_SCORE = { critical: 95, high: 78, medium: 60, low: 35 };
-
-// 단계 노드 색상 (순서대로 진해짐)
 const NODE_COLORS = [
   { bg: "#E6F1FB", text: "#0C447C" },
   { bg: "#CCDFF7", text: "#0C447C" },
-  { bg: "#185FA5", text: "#fff"    },
-  { bg: "#0C447C", text: "#fff"    },
-  { bg: "#042C53", text: "#fff"    },
+  { bg: "#185FA5", text: "#FFFFFF" },
+  { bg: "#0C447C", text: "#FFFFFF" },
+  { bg: "#042C53", text: "#FFFFFF" },
 ];
-
-const SEVERITY_COLOR = {
-  Critical: "#E05252", High: "#F0874A", Medium: "#F6C142", Low: "#38A169",
-};
-const SEVERITY_BADGE = {
-  Critical: { bg: "#FEF1F1", text: "#C53030" },
-  High:     { bg: "#FEF4EE", text: "#BF5520" },
-  Medium:   { bg: "#FEF9E4", text: "#9C6F00" },
-  Low:      { bg: "#F0FDF9", text: "#276749" },
-};
-const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"];
 
 const ALL_TACTICS = [
   { id: "TA0043", name: "정찰" },
@@ -42,216 +26,281 @@ const ALL_TACTICS = [
   { id: "TA0040", name: "영향" },
 ];
 
-const getSeverity = (tech, violationList) => {
-  if (!tech.violation_ids?.length) return null;
-  const linked = violationList.filter((v) => tech.violation_ids.includes(v.invariant_id || v.id));
-  return SEVERITY_ORDER.find((s) => linked.some((v) => v.severity === s)) || null;
+const TACTIC_NAME_MAP = Object.fromEntries(ALL_TACTICS.map((t) => [t.id, t.name]));
+
+const SEVERITY_COLOR = { Critical: "#E05252", High: "#F0874A", Medium: "#F6C142", Low: "#38A169" };
+const SEVERITY_BADGE = {
+  Critical: { bg: "#FEF1F1", text: "#C53030" },
+  High:     { bg: "#FEF4EE", text: "#BF5520" },
+  Medium:   { bg: "#FEF9E4", text: "#9C6F00" },
+  Low:      { bg: "#F0FDF9", text: "#276749" },
 };
+const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"];
 
-// ── MITRE 히트맵 ─────────────────────────────────────────────────────────────
+const DETAIL_TABS = [
+  { key: "flow", label: "공격 흐름" },
+  { key: "invariants", label: "취약점 및 기법" },
+  { key: "evidence", label: "Evidence / 자산" },
+];
 
-function MitreHeatmap({ mitreMapping, violations }) {
+export default function AttackSection({ attackChains = [], mitreTacticMap = {}, violations = [], activeFilter = "all" }) {
+  const filteredViolations = activeFilter === "all"
+    ? violations
+    : violations.filter((item) => (item.invariant_source ?? item.source) === activeFilter);
+
+  return (
+    <section>
+      <MitreHeatmap violations={filteredViolations} mitreTacticMap={mitreTacticMap} />
+      <SectionTitle title="AI 공격 체인" subtitle="AI 2가 분석한 공격 시나리오" />
+      {attackChains.length ? (
+        attackChains.map((chain) => (
+          <ChainCard key={chain.chain_scenario_id} chain={chain} violations={filteredViolations} />
+        ))
+      ) : (
+        <div style={styles.card}>No AI2 chain reports were returned.</div>
+      )}
+    </section>
+  );
+}
+
+// ── MITRE ATT&CK 히트맵 (구 버전 스타일) ────────────────────────────────────
+
+function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
   const [selected, setSelected] = useState(null);
 
-  const tacticMap = Object.fromEntries((mitreMapping ?? []).map((t) => [t.tactic_id, t]));
+  const violationById = Object.fromEntries(
+    violations.map((v) => [v.invariant_id ?? v.id, v])
+  );
 
-  const handleClick = (tech, tacticName) => {
-    if (selected?.technique_id === tech.technique_id && selected?.tactic_name === tacticName) {
+  // 1순위: violations[].mitre_tactic 필드로 매핑
+  const tacticViolMap = {};
+  const tacticTechMap = {};
+  violations.forEach((v) => {
+    const tactic = v.mitre_tactic;
+    if (!tactic) return;
+    if (!tacticViolMap[tactic]) tacticViolMap[tactic] = [];
+    tacticViolMap[tactic].push(v);
+    const tech = v.mitre_technique;
+    if (tech) {
+      if (!tacticTechMap[tactic]) tacticTechMap[tactic] = new Set();
+      tacticTechMap[tactic].add(tech);
+    }
+  });
+
+  // 2순위: mitreTacticMap.tactics[].violated_invariants 로 매핑
+  (mitreTacticMap?.tactics ?? []).forEach((tactic) => {
+    const tacticId = tactic.tactic_id;
+    if (!tacticId) return;
+    const invIds = asArray(tactic.violated_invariants ?? tactic.invariants);
+    if (!invIds.length) return;
+    const linked = invIds.map((id) => violationById[id]).filter(Boolean);
+    if (!linked.length) return;
+    if (!tacticViolMap[tacticId]) tacticViolMap[tacticId] = [];
+    linked.forEach((v) => {
+      if (!tacticViolMap[tacticId].includes(v)) tacticViolMap[tacticId].push(v);
+    });
+  });
+
+  const handleClick = (tac) => {
+    if (selected?.tactic_id === tac.id) {
       setSelected(null);
     } else {
-      setSelected({ ...tech, tactic_name: tacticName });
+      setSelected({ tactic_id: tac.id, tactic_name: tac.name, linkedViolations: tacticViolMap[tac.id] ?? [] });
     }
   };
 
-  const linkedViolations = selected
-    ? violations.filter((v) => selected.violation_ids?.includes(v.invariant_id || v.id))
-    : [];
+  return (
+    <section style={{ marginBottom: 22 }}>
+      <SectionTitle title="MITRE ATT&CK Map - 탐지된 전술/기법" subtitle="공격 체인과 연결된 MITRE 전술 및 기법" />
+      <div style={styles.card}>
+        <div style={{ overflowX: "auto", paddingBottom: 8 }}>
+          <div style={{ minWidth: ALL_TACTICS.length * 92 }}>
+            {/* 전술 헤더 */}
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4, marginBottom: 4 }}>
+              {ALL_TACTICS.map((tac) => {
+                const isActive = Boolean(tacticViolMap[tac.id]?.length);
+                const isSelected = selected?.tactic_id === tac.id;
+                return (
+                  <button
+                    key={tac.id}
+                    onClick={() => isActive && handleClick(tac)}
+                    title={tac.name}
+                    style={{
+                      fontSize: 10,
+                      padding: "5px 2px",
+                      borderRadius: 4,
+                      cursor: isActive ? "pointer" : "default",
+                      border: isSelected ? "2px solid #378ADD" : "1px solid transparent",
+                      background: isActive ? "#185FA5" : "#F1F5F9",
+                      color: isActive ? "#fff" : "#94A3B8",
+                      textAlign: "center",
+                      fontWeight: isActive ? 700 : 400,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {tac.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 기법 셀 */}
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4 }}>
+              {ALL_TACTICS.map((tac) => {
+                const techniques = [...(tacticTechMap[tac.id] ?? [])];
+                const violsForTac = tacticViolMap[tac.id] ?? [];
+                return (
+                  <div key={tac.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {techniques.map((techId) => {
+                      const sev = SEVERITY_ORDER.find((s) =>
+                        violsForTac.filter((v) => v.mitre_technique === techId).some((v) => v.severity === s)
+                      );
+                      return (
+                        <div
+                          key={techId}
+                          onClick={() => handleClick(tac)}
+                          title={techId}
+                          style={{
+                            height: 36, borderRadius: 3, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 9, fontWeight: 500, textAlign: "center",
+                            background: SEVERITY_COLOR[sev] ?? "#E6F1FB",
+                            color: sev ? "#fff" : "#0C447C",
+                            outline: selected?.tactic_id === tac.id ? "2px solid #378ADD" : "none",
+                            outlineOffset: 1,
+                            opacity: selected && selected.tactic_id !== tac.id ? 0.5 : 1,
+                            transition: "opacity 0.15s",
+                          }}
+                        >
+                          {techId}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* 범례 */}
+        <div style={{ display: "flex", gap: 14, marginTop: 10 }}>
+          {SEVERITY_ORDER.map((s) => (
+            <span key={s} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#73726c" }}>
+              <span style={{ width: 12, height: 12, borderRadius: 2, background: SEVERITY_COLOR[s], display: "inline-block" }} />
+              {s}
+            </span>
+          ))}
+        </div>
+
+        {/* 선택된 전술 패널 */}
+        {selected && (
+          <div style={{ marginTop: 12, border: "0.5px solid #CBD5E1", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#F1F5F9" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>{selected.tactic_id}</span>
+                <span style={{ fontSize: 12, color: "#475569" }}>{selected.tactic_name}</span>
+              </div>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#94A3B8", padding: 0 }}>✕</button>
+            </div>
+            <div style={{ padding: "12px 14px", background: "#fff" }}>
+              <p style={{ fontSize: 11, color: "#73726c", margin: "0 0 8px" }}>
+                연결된 불변식 위반 항목 {selected.linkedViolations.length}개
+              </p>
+              {selected.linkedViolations.map((v) => {
+                const sc = SEVERITY_BADGE[v.severity] ?? { bg: "#f1efea", text: "#73726c" };
+                return (
+                  <div key={v.invariant_id ?? v.id} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 10px", marginBottom: 6,
+                    background: "#fff", border: "0.5px solid rgba(0,0,0,0.08)",
+                    borderRadius: 6, fontSize: 12,
+                  }}>
+                    <span style={{ fontWeight: 500, color: "#1a1a18", minWidth: 90, flexShrink: 0 }}>{v.invariant_id ?? v.id}</span>
+                    <span style={{ fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 99, background: sc.bg, color: sc.text, flexShrink: 0 }}>
+                      {v.severity}
+                    </span>
+                    <span style={{ color: "#444", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {v.summary ?? v.description}
+                    </span>
+                    {v.zone && <span style={{ color: "#73726c", flexShrink: 0, fontSize: 11 }}>{v.zone}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── 공격 체인 카드 ───────────────────────────────────────────────────────────
+
+function ChainCard({ chain, violations = [] }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState("flow");
+  const steps = normalizeChainSteps(chain, violations);
+  const riskScore = getExplicitRiskScore(chain);
+  const title = chain.title ?? chain.executive_summary ?? "Untitled attack chain";
+  const summary = chain.scenario_basis?.summary ?? chain.executive_summary ?? chain.testability_reason;
 
   return (
-    <div style={card}>
-      <p style={cardTitle}>MITRE ATT&CK 매트릭스 — 탐지된 전술/기법</p>
+    <article style={styles.card}>
+      <div style={styles.chainHeader}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={styles.chainTitle}>{title}</h3>
+          <div style={styles.metaRow}>
+            <span style={styles.chainId}>{chain.chain_scenario_id}</span>
+            {chain.risk_level && <Badge value={capitalize(chain.risk_level)} />}
+            {riskScore !== null && <span style={styles.riskScore}>위험도 {riskScore}</span>}
+          </div>
+          {summary && <p style={styles.summary}>{summary}</p>}
+          <ChipList values={chain.related_invariants} />
+        </div>
+        <button style={styles.smallButton} onClick={() => setOpen((value) => !value)}>
+          {open ? "닫기" : "상세 보기"}
+        </button>
+      </div>
 
-      <div style={{ overflowX: "auto", paddingBottom: 8 }}>
-        <div style={{ minWidth: ALL_TACTICS.length * 92 }}>
-          {/* 전술 헤더 */}
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4, marginBottom: 4 }}>
-            {ALL_TACTICS.map((tac) => (
-              <div key={tac.id} style={{ fontSize: 10, color: "#73726c", textAlign: "center", padding: "2px 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {tac.name}
-              </div>
+      <ChainFlow steps={steps} />
+
+      {open && (
+        <div style={styles.expandedPanel}>
+          <div style={styles.tabRow}>
+            {DETAIL_TABS.map((item) => (
+              <button key={item.key} style={tabButton(tab === item.key)} onClick={() => setTab(item.key)}>
+                {item.label}
+              </button>
             ))}
           </div>
-
-          {/* 기법 칸 */}
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4 }}>
-            {ALL_TACTICS.map((tac) => {
-              const tacData    = tacticMap[tac.id];
-              const techniques = (tacData?.techniques ?? []).filter(
-                (t) => t.violation_ids?.some((vid) => violations.some((v) => (v.invariant_id || v.id) === vid))
-              );
-              return (
-                <div key={tac.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                  {techniques.map((tech) => {
-                    const sev        = getSeverity(tech, violations);
-                    const bg         = SEVERITY_COLOR[sev] || "#E6F1FB";
-                    const txtColor   = sev ? "#fff" : "#0C447C";
-                    const isSelected = selected?.technique_id === tech.technique_id && selected?.tactic_name === tac.name;
-                    return (
-                      <div
-                        key={tech.technique_id}
-                        onClick={() => handleClick(tech, tac.name)}
-                        style={{
-                          height: 36, borderRadius: 3, cursor: "pointer",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 9, fontWeight: 500,
-                          background: bg, color: txtColor,
-                          outline: isSelected ? "2px solid #378ADD" : "none",
-                          outlineOffset: 1,
-                          opacity: selected && !isSelected ? 0.5 : 1,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        {tech.technique_id}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* 범례 */}
-      <div style={{ display: "flex", gap: 14, marginTop: 10 }}>
-        {SEVERITY_ORDER.map((s) => (
-          <span key={s} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#73726c" }}>
-            <span style={{ width: 12, height: 12, borderRadius: 2, background: SEVERITY_COLOR[s], display: "inline-block" }} />
-            {s}
-          </span>
-        ))}
-      </div>
-
-      {/* 선택된 기법 하단 패널 — OLD 스타일 (border + 헤더/바디 분리) */}
-      {selected && (
-        <div style={{ marginTop: 12, border: "0.5px solid #CBD5E1", borderRadius: 8, overflow: "hidden" }}>
-          {/* 패널 헤더 */}
-          <div style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            padding: "10px 14px", background: "#F1F5F9",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>{selected.technique_id}</span>
-              <span style={{ fontSize: 12, color: "#475569" }}>{selected.name}</span>
-              <span style={{ fontSize: 11, color: "#94A3B8" }}>· {selected.tactic_name}</span>
-            </div>
-            <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#94A3B8", padding: 0 }}>✕</button>
-          </div>
-          {/* 패널 바디 */}
-          <div style={{ padding: "12px 14px", background: "#fff" }}>
-            <p style={{ fontSize: 11, color: "#73726c", margin: "0 0 8px" }}>
-              연결된 불변식 위반 항목 {linkedViolations.length}개
-            </p>
-            {linkedViolations.map((v) => {
-              const sc = SEVERITY_BADGE[v.severity] || { bg: "#f1efea", text: "#73726c" };
-              return (
-                <div key={v.invariant_id || v.id} style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "8px 10px", marginBottom: 6,
-                  background: "#fff", border: "0.5px solid rgba(0,0,0,0.08)",
-                  borderRadius: 6, fontSize: 12,
-                }}>
-                  <span style={{ fontWeight: 500, color: "#1a1a18", minWidth: 76, flexShrink: 0 }}>{v.invariant_id || v.id}</span>
-                  <span style={{ fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 99, background: sc.bg, color: sc.text, flexShrink: 0 }}>
-                    {v.severity}
-                  </span>
-                  <span style={{ color: "#444", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {v.summary || v.description}
-                  </span>
-                  <span style={{ color: "#73726c", flexShrink: 0 }}>{v.zone || v.server_zone}</span>
-                </div>
-              );
-            })}
-          </div>
+          {tab === "flow" && <KillChainList steps={steps} />}
+          {tab === "invariants" && <InvariantList chain={chain} violations={violations} />}
+          {tab === "evidence" && <EvidenceAssetList steps={steps} />}
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
-// ── 공격 흐름 탭 (mitre_attack_flow → kill_chain 스타일) ─────────────────────
-
-function KillChainTab({ flow }) {
-  if (!flow?.length) return <p style={emptyText}>공격 흐름 데이터가 없습니다.</p>;
+function ChainFlow({ steps = [] }) {
+  if (!steps.length) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-      {flow.map((item) => (
-        <div key={item.order} style={{
-          display: "flex", gap: 12, alignItems: "flex-start",
-          padding: "14px 0", borderBottom: "0.5px solid rgba(0,0,0,0.06)",
-        }}>
-          {/* 왼쪽: 번호 + 전술명 */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0, width: 56 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#73726c" }}>{item.order}</span>
-            <span style={{ fontSize: 9, color: "#73726c", textAlign: "center", lineHeight: 1.3, wordBreak: "keep-all" }}>
-              {item.tactic}
-            </span>
-          </div>
-
-          {/* 오른쪽: INV 뱃지 + 단계 제목 + 이유 */}
-          <div style={{ flex: 1 }}>
-            {item.related_invariants?.length > 0 && (
-              <div style={{ display: "flex", gap: 4, marginBottom: 5, flexWrap: "wrap" }}>
-                {item.related_invariants.map((inv) => (
-                  <span key={inv} style={{ fontSize: 10, fontWeight: 500, color: "#185FA5", background: "#EEF4FD", padding: "1px 6px", borderRadius: 4 }}>
-                    {inv}
-                  </span>
-                ))}
-              </div>
-            )}
-            <p style={{ fontSize: 12, color: "#1a1a18", margin: "0 0 3px", fontWeight: 500 }}>{item.step}</p>
-            {item.reason && (
-              <p style={{ fontSize: 11, color: "#73726c", margin: 0, lineHeight: 1.55 }}>{item.reason}</p>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── 취약점 및 기법 탭 (related_invariants → violation 상세) ─────────────────
-
-function TechniquesTab({ chain, violations }) {
-  const invIds = chain.related_invariants ?? [];
-
-  if (!invIds.length) return <p style={emptyText}>연결된 불변식 정보가 없습니다.</p>;
-
-  // violations 맵으로 빠르게 조회 — invariant_id 기준, 없으면 ID만 표시 (silent drop 방지)
-  const violationMap = Object.fromEntries(violations.map((v) => [v.invariant_id || v.id, v]));
-  const display = invIds.map((id) => violationMap[id] ?? { invariant_id: id, id, severity: null, summary: "", type: "", attack_phase: "" });
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {display.map((item) => {
-        const sc = item.severity ? (SEVERITY_BADGE[item.severity] || {}) : { bg: "#f1efea", text: "#73726c" };
+    <div style={styles.flowRow}>
+      {steps.map((step, index) => {
+        const color = index === steps.length - 1
+          ? NODE_COLORS[NODE_COLORS.length - 1]
+          : NODE_COLORS[Math.min(index, NODE_COLORS.length - 2)];
+        const label = flowNodeLabel(step);
         return (
-          <div key={item.invariant_id || item.id} style={{ border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: "10px 12px", background: "#fafbfc" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#0C447C", fontFamily: "monospace" }}>{item.invariant_id || item.id}</span>
-              {item.severity && (
-                <span style={{ fontSize: 10, fontWeight: 500, background: sc.bg, color: sc.text, padding: "1px 7px", borderRadius: 99 }}>{item.severity}</span>
-              )}
-              {item.type && (
-                <span style={{ fontSize: 10, color: "#73726c", background: "#f1efea", padding: "1px 7px", borderRadius: 99 }}>{item.type}</span>
-              )}
-              {item.attack_phase && (
-                <span style={{ fontSize: 10, color: "#378ADD", background: "#F0F6FE", padding: "1px 7px", borderRadius: 99, marginLeft: "auto" }}>{item.attack_phase}</span>
-              )}
+          <div key={`${step.order}-${label}`} style={styles.flowItem}>
+            <div style={{ ...styles.flowNode, background: color.bg, color: color.text }} title={stepTitle(step)}>
+              {label}
             </div>
-            {(item.summary || item.description) && (
-              <p style={{ fontSize: 12, color: "#444", lineHeight: 1.55, margin: 0 }}>{item.summary || item.description}</p>
-            )}
+            <span style={styles.flowStep}>{index + 1}단계</span>
+            {index < steps.length - 1 && <span style={styles.flowArrow}>→</span>}
           </div>
         );
       })}
@@ -259,166 +308,242 @@ function TechniquesTab({ chain, violations }) {
   );
 }
 
-// ── 상세 공격 절차 탭 (manual_validation_guide → 절차 목록) ─────────────────
-
-function ProceduresTab({ guide }) {
-  if (!guide?.steps?.length) return <p style={emptyText}>상세 절차 데이터가 없습니다.</p>;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {guide.steps.map((step, i) => (
-        <div key={i} style={{ border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "#f5f7fa", borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-            <span style={{
-              width: 20, height: 20, borderRadius: "50%", background: "#0C447C",
-              color: "#fff", fontSize: 10, fontWeight: 600,
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            }}>
-              {i + 1}
-            </span>
-            <span style={{ fontSize: 12, fontWeight: 500, color: "#1a1a18" }}>{step?.text ?? step}</span>
-          </div>
-          {/* 성공 기준이 있으면 해당 인덱스 표시 */}
-          {guide.success_criteria?.[i] && (
-            <div style={{ padding: "8px 12px" }}>
-              <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-                <span style={{ fontSize: 10, color: "#73726c", flexShrink: 0, marginTop: 1 }}>성공 기준</span>
-                <span style={{ fontSize: 11, color: "#444", lineHeight: 1.5 }}>{guide.success_criteria[i]}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-      {/* 안전 경계 */}
-      {guide.safety_boundary?.length > 0 && (
-        <div style={{ background: "#FEF3C7", borderRadius: 8, padding: "10px 14px" }}>
-          <p style={{ fontSize: 10, fontWeight: 600, color: "#92400E", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.05em" }}>안전 경계</p>
-          {guide.safety_boundary.map((s, i) => (
-            <p key={i} style={{ fontSize: 11, color: "#92400E", margin: "0 0 2px" }}>· {s}</p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── 시나리오 카드 ────────────────────────────────────────────────────────────
-
-const DETAIL_TABS = [
-  { key: "kill_chain",  label: "공격 흐름"     },
-  { key: "techniques",  label: "취약점 및 기법" },
-  { key: "procedures",  label: "상세 공격 절차" },
-];
-
-function ScenarioCard({ chain, violations }) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab]   = useState("kill_chain");
-
-  const riskKey   = (chain.risk_level || "medium").toLowerCase();
-  const riskScore = RISK_SCORE[riskKey] ?? 60;
-  const steps     = chain.attack_chain ?? [];
-
-  return (
-    <div style={card}>
-      {/* 헤더 */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <p style={{ ...cardTitle, margin: 0 }}>
-          {chain.chain_scenario_id} · {chain.title}
-        </p>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 12 }}>
-          <span style={{ fontSize: 11, fontWeight: 500, background: "#E6F1FB", color: "#0C447C", padding: "3px 10px", borderRadius: 99 }}>
-            위험도 {riskScore}
-          </span>
-          <button
-            onClick={() => setOpen((v) => !v)}
-            style={{ background: "none", border: "0.5px solid rgba(0,0,0,0.15)", borderRadius: 6, cursor: "pointer", fontSize: 11, color: "#73726c", padding: "3px 10px" }}
-          >
-            상세 {open ? "▲" : "▼"}
-          </button>
-        </div>
-      </div>
-
-      {/* 가로 노드 흐름 (attack_chain 기반) */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
-        {steps.map((step, i) => {
-          const c = i === steps.length - 1
-            ? NODE_COLORS[NODE_COLORS.length - 1]
-            : NODE_COLORS[Math.min(i, NODE_COLORS.length - 2)];
-          const label = step.length > 10 ? step.slice(0, 9) + "…" : step;
-          return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                <div style={{
-                  background: c.bg, color: c.text,
-                  padding: "6px 10px", borderRadius: 8,
-                  fontSize: 11, fontWeight: 500,
-                  minWidth: 80, textAlign: "center",
-                }} title={step}>
-                  {label}
-                </div>
-                <span style={{ fontSize: 10, color: "#73726c" }}>{i + 1}단계</span>
-              </div>
-              {i < steps.length - 1 && <span style={{ fontSize: 16, color: "#73726c" }}>→</span>}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 아코디언 */}
-      {open && (
-        <div style={{ marginTop: 16, borderTop: "0.5px solid rgba(0,0,0,0.08)", paddingTop: 14 }}>
-          <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
-            {DETAIL_TABS.map((t) => (
-              <button key={t.key} onClick={() => setTab(t.key)} style={{
-                padding: "5px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                cursor: "pointer", border: "none",
-                background: tab === t.key ? "#0C447C" : "#f1efea",
-                color: tab === t.key ? "#fff" : "#73726c",
-                transition: "background 0.15s",
-              }}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {tab === "kill_chain"  && <KillChainTab flow={chain.mitre_attack_flow} />}
-          {tab === "techniques"  && <TechniquesTab chain={chain} violations={violations} />}
-          {tab === "procedures"  && <ProceduresTab guide={chain.manual_validation_guide} />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── 메인 섹션 ────────────────────────────────────────────────────────────────
-
-export default function AttackSection({ attackChains, mitreMapping, violations, activeFilter }) {
-  const chains = attackChains ?? [];
-  const viols  = violations   ?? [];
-
-  const filteredViolations = activeFilter && activeFilter !== "전체"
-    ? viols.filter((v) => v.invariant_source === activeFilter)
-    : viols;
-
+function KillChainList({ steps = [] }) {
+  if (!steps.length) return <p style={styles.emptyText}>공격 흐름 데이터가 없습니다.</p>;
   return (
     <div>
-      <p style={sectionLabel}>AI 공격 시나리오 및 MITRE ATT&CK 매핑</p>
-
-      <MitreHeatmap mitreMapping={mitreMapping ?? []} violations={filteredViolations} />
-
-      {chains.length === 0 ? (
-        <div style={{ ...card, textAlign: "center", padding: "32px 0" }}>
-          <p style={{ fontSize: 13, color: "#73726c", margin: "0 0 6px" }}>아직 생성된 AI 2 공격 시나리오가 없습니다</p>
-          <p style={{ fontSize: 11, color: "#b0aea8", margin: 0 }}>POST /api/ai2/scenarios 로 시나리오를 주입하면 여기에 표시됩니다</p>
+      {steps.map((step) => (
+        <div key={`${step.order}-${stepTitle(step)}`} style={styles.killChainItem}>
+          <div style={styles.killChainIndex}>
+            <span>{step.order}</span>
+            {step.tactic && <small>{step.tactic}</small>}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={styles.mitreMeta}>
+              {formatTacticLabel(step) && <span style={styles.mitreBadge}>{formatTacticLabel(step)}</span>}
+              {formatTechniqueLabel(step) && <span style={styles.mitreBadge}>{formatTechniqueLabel(step)}</span>}
+              <ChipList values={step.related_invariants} />
+            </div>
+            <p style={styles.killChainFinding}>{stepTitle(step)}</p>
+            {step.reason && <p style={styles.killChainReason}>{step.reason}</p>}
+          </div>
         </div>
-      ) : (
-        chains.map((chain) => (
-          <ScenarioCard key={chain.chain_scenario_id} chain={chain} violations={filteredViolations} />
-        ))
-      )}
+      ))}
     </div>
   );
 }
 
-const sectionLabel = { fontSize: 11, fontWeight: 500, color: "#73726c", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 };
-const card         = { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 16, marginBottom: 12 };
-const cardTitle    = { fontSize: 13, fontWeight: 500, marginBottom: 12 };
-const emptyText    = { fontSize: 12, color: "#b0aea8", textAlign: "center", padding: "20px 0", margin: 0 };
+function InvariantList({ chain, violations = [] }) {
+  const ids = asArray(chain.related_invariants);
+  if (!ids.length) return <p style={styles.emptyText}>연결된 불변식 정보가 없습니다.</p>;
+
+  const violationMap = Object.fromEntries(violations.map((item) => [item.invariant_id ?? item.id, item]));
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {ids.map((id) => {
+        const item = violationMap[id] ?? { invariant_id: id };
+        return (
+          <div key={id} style={styles.invariantCard}>
+            <div style={styles.mitreMeta}>
+              <strong style={styles.monoText}>{item.invariant_id ?? id}</strong>
+              {item.severity && <Badge value={item.severity} />}
+              {item.mitre_tactic && <span style={styles.mitreBadge}>{formatTacticName(item.mitre_tactic)}</span>}
+              {item.mitre_technique && <span style={styles.mitreBadge}>{item.mitre_technique}</span>}
+            </div>
+            {(item.summary || item.description) && <p style={styles.killChainReason}>{item.summary || item.description}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EvidenceAssetList({ steps = [] }) {
+  if (!steps.length) return <p style={styles.emptyText}>Evidence / 자산 데이터가 없습니다.</p>;
+
+  return (
+    <div style={styles.evidenceGrid}>
+      {steps.map((step, index) => (
+        <div key={`${step.order}-${index}`} style={styles.evidenceCard}>
+          <div style={styles.evidenceHeader}>
+            <strong>{step.order}. {stepTitle(step)}</strong>
+            <span>{formatTacticLabel(step) || formatTechniqueLabel(step)}</span>
+          </div>
+          <DetailLine label="Evidence" value={<ChipList values={step.evidence_ids} />} />
+          <DetailLine label="관련 자산" value={<ChipList values={step.threatened_asset_ids} />} />
+          <DetailLine label="관련 불변식" value={<ChipList values={step.related_invariants} />} />
+          <DetailLine label="Reason" value={step.reason} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function normalizeChainSteps(chain, violations) {
+  const flowSteps = asArray(chain.mitre_attack_flow);
+  const attackSteps = asArray(chain.attack_chain);
+  const rawSteps = asArray(chain.step_reports);
+  const maxLength = Math.max(flowSteps.length, attackSteps.length, rawSteps.length);
+
+  return Array.from({ length: maxLength }, (_, index) => {
+    const flow = flowSteps[index] ?? {};
+    const attackStep = attackSteps[index];
+    const raw = rawSteps[index] ?? {};
+    const order = flow.order ?? flow.flow_order ?? raw.order ?? raw.step_order ?? index + 1;
+    const tactic = flow.tactic ?? raw.tactic ?? raw.tactic_id;
+    const technique = flow.technique ?? raw.technique ?? raw.technique_id;
+    const related = unique([
+      ...asArray(flow.related_invariants),
+      ...asArray(raw.related_invariants ?? raw.violation_ids ?? raw.violated_invariants),
+      ...asArray(chain.related_invariants),
+    ]);
+    const linkedViolations = violations.filter((violation) => related.includes(violation.invariant_id ?? violation.id));
+    const fallbackViolation = linkedViolations[index % Math.max(linkedViolations.length, 1)];
+    const isStepId = attackStep && /^chain-.+-step-\d+$/i.test(String(attackStep));
+    const stepText = isStepId
+      ? attackStep
+      : firstUsefulText(
+          flow.step,
+          attackStep,
+          raw.finding,
+          raw.step,
+          raw.title,
+          raw.path,
+          raw.chain_transition,
+          raw.reason,
+          chain.scenario_basis?.summary,
+          chain.testability_reason,
+          fallbackViolation?.summary,
+          fallbackViolation?.reason
+        );
+
+    return {
+      order,
+      tactic,
+      tactic_name: flow.tactic_name ?? raw.tactic_name ?? TACTIC_NAME_MAP[tactic],
+      technique,
+      technique_name: flow.technique_name ?? raw.technique_name,
+      step: stepText,
+      reason: firstUsefulText(flow.reason, raw.chain_transition, raw.reason, fallbackViolation?.reason),
+      related_invariants: related,
+      evidence_ids: unique([
+        ...asArray(raw.evidence_ids ?? raw.evidence_refs ?? raw.matched_evidence_ids),
+        ...linkedViolations.flatMap((violation) => asArray(violation.evidence_ids)),
+      ]),
+      threatened_asset_ids: unique([
+        ...asArray(raw.threatened_asset_ids ?? raw.affected_asset_ids ?? raw.asset_ids ?? raw.target_asset_ids),
+        ...linkedViolations.flatMap((violation) => asArray(violation.asset_ids ?? violation.affected_registry_asset_ids ?? violation.affected_asset_ids)),
+      ]),
+    };
+  });
+}
+
+function DetailLine({ label, value }) {
+  if (!value) return null;
+  return (
+    <div style={styles.detailLine}>
+      <span>{label}</span>
+      <div>{value}</div>
+    </div>
+  );
+}
+
+function flowNodeLabel(step) {
+  if (step.tactic) return formatTacticName(step.tactic, step.tactic_name);
+  if (step.technique) return formatTechniqueLabel(step);
+  return `단계 ${step.order}`;
+}
+
+function stepTitle(step) {
+  const title = firstUsefulText(step.step, formatTechniqueLabel(step), formatTacticLabel(step));
+  return title || "공격 흐름 정보 없음";
+}
+
+function formatTacticLabel(step) {
+  if (!step.tactic && !step.tactic_name) return "";
+  return formatTacticName(step.tactic, step.tactic_name);
+}
+
+function formatTacticName(tactic, name) {
+  const resolved = name ?? TACTIC_NAME_MAP[tactic];
+  return [tactic, resolved].filter(Boolean).join(" - ");
+}
+
+function formatTechniqueLabel(step) {
+  if (!step.technique && !step.technique_name) return "";
+  return [step.technique, step.technique_name].filter(Boolean).join(" - ");
+}
+
+function getExplicitRiskScore(chain) {
+  const value = chain.risk_score ?? chain.riskScore ?? chain.score;
+  if (value === null || value === undefined || value === "") return null;
+  const score = Number(value);
+  return Number.isFinite(score) ? score : null;
+}
+
+function firstUsefulText(...values) {
+  return values.find((value) => {
+    if (value === null || value === undefined) return false;
+    const text = String(value).trim();
+    if (!text) return false;
+    if (text === "No finding provided." || text === "Evidence correlation step") return false;
+    return !/^chain-.+-step-\d+$/i.test(text);
+  });
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value.filter((item) => item !== null && item !== undefined && item !== "");
+  return value ? [value] : [];
+}
+
+function unique(values) {
+  return [...new Set(asArray(values))];
+}
+
+function capitalize(value) {
+  return String(value).replace(/^\w/, (char) => char.toUpperCase());
+}
+
+const styles = {
+  card: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 18, marginBottom: 12 },
+  chainHeader: { display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 14 },
+  chainTitle: { margin: "0 0 8px", fontSize: 14, color: "#1a1a18", lineHeight: 1.45 },
+  metaRow: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 },
+  chainId: { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 11, color: "#0b2f57", overflowWrap: "anywhere" },
+  summary: { margin: "0 0 10px", color: "#73726c", fontSize: 12, lineHeight: 1.6 },
+  smallButton: { border: "0.5px solid rgba(0,0,0,0.12)", background: "#fff", color: "#73726c", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 12 },
+  riskScore: { fontSize: 11, fontWeight: 700, background: "#E6F1FB", color: "#0C447C", padding: "3px 10px", borderRadius: 999 },
+  flowRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center", margin: "12px 0 6px" },
+  flowItem: { display: "flex", alignItems: "center", gap: 6 },
+  flowNode: { padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, minWidth: 110, maxWidth: 170, minHeight: 34, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", lineHeight: 1.25 },
+  flowStep: { display: "none" },
+  flowArrow: { fontSize: 16, color: "#94A3B8" },
+  expandedPanel: { marginTop: 16, borderTop: "0.5px solid rgba(0,0,0,0.08)", paddingTop: 14 },
+  tabRow: { display: "flex", gap: 4, marginBottom: 14 },
+  killChainItem: { display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 0", borderBottom: "0.5px solid rgba(0,0,0,0.06)" },
+  killChainIndex: { display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0, width: 64, color: "#73726c", fontSize: 12, fontWeight: 700 },
+  mitreMeta: { display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", marginBottom: 5 },
+  mitreBadge: { fontSize: 10, fontWeight: 700, color: "#0C447C", background: "#EEF4FD", padding: "2px 7px", borderRadius: 5 },
+  killChainFinding: { fontSize: 12, color: "#1a1a18", margin: "0 0 3px", fontWeight: 700, lineHeight: 1.55 },
+  killChainReason: { fontSize: 11, color: "#73726c", margin: 0, lineHeight: 1.55 },
+  invariantCard: { border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: "10px 12px", background: "#FAFBFC" },
+  monoText: { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", color: "#0C447C", fontSize: 12 },
+  evidenceGrid: { display: "grid", gap: 10 },
+  evidenceCard: { border: "0.5px solid rgba(0,0,0,0.08)", background: "#F8FAFC", borderRadius: 10, padding: 14 },
+  evidenceHeader: { display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, color: "#185FA5", fontSize: 13, alignItems: "flex-start" },
+  detailLine: { display: "grid", gridTemplateColumns: "150px 1fr", gap: 12, padding: "8px 12px", borderTop: "0.5px solid rgba(0,0,0,0.08)", fontSize: 12, color: "#1a1a18" },
+  emptyText: { fontSize: 12, color: "#98a2b3", textAlign: "center", padding: "20px 0", margin: 0 },
+};
+
+function tabButton(active) {
+  return {
+    padding: "6px 14px",
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    border: "none",
+    background: active ? "#0C447C" : "#F1F0EC",
+    color: active ? "#FFFFFF" : "#73726c",
+  };
+}
