@@ -9,6 +9,7 @@ import PentestSection from "../components/PentestSection";
 import ScanSection from "../components/ScanSection";
 import ViolationSection from "../components/ViolationSection";
 import { ACTIVE_API_BASE_URL, AI_PACK_API_BASE_URL, fetchHealth, fetchScanDetails, fetchScanList, USE_MOCK } from "../services/scanService";
+import { sourceMatches } from "../utils/invariantSource";
 
 const NAV_ITEMS = [
   { id: "overview", icon: "⚠️", label: "불변식 위반 현황", sections: ["kpi", "violation", "attack"] },
@@ -52,20 +53,30 @@ export default function Dashboard() {
 
   const assetHistory = useMemo(() => {
     const points = detail?.securityPostureTimeline?.points ?? [];
-    return points.map((point) => ({
-      date: formatShortDate(point.created_at),
+    const timelinePoints = points.length > 1 ? points : buildTimelinePointsFromScans(scanList);
+    const dayCounts = countByDay(timelinePoints.map((point) => point.created_at));
+    return timelinePoints.map((point) => ({
+      date: dayCounts[dateKey(point.created_at)] > 1 ? formatShortDateTime(point.created_at) : formatShortDate(point.created_at),
+      tooltip_label: `${formatDate(point.created_at)} · ${point.run_id ?? "-"}`,
       scan_id: point.run_id,
       total: point.metrics?.asset_count ?? 0,
-      with_violation: point.metrics?.violated_invariant_count ?? 0,
-      changed_assets: point.changed_assets?.length ?? point.metrics?.changed_asset_count ?? 0,
-      new_violations: point.new_violations_since_previous_run?.length ?? 0,
-      resolved: point.resolved_invariants_since_previous_run?.length ?? 0,
+      with_violation: point.metrics?.violated_invariant_count ?? point.metrics?.total_violations ?? 0,
+      changed_assets: metricOrArrayLength(point.metrics?.changed_asset_count, point.changed_assets),
+      new_violations: metricOrArrayLength(point.metrics?.new_violation_count, point.new_violations_since_previous_run),
+      resolved: metricOrArrayLength(point.metrics?.resolved_invariant_count, point.resolved_invariants_since_previous_run),
       changed_asset_ids: point.changed_assets ?? [],
       violated_invariants: point.violated_invariants ?? [],
       new_violations_since_previous_run: point.new_violations_since_previous_run ?? [],
       resolved_invariants_since_previous_run: point.resolved_invariants_since_previous_run ?? [],
     }));
-  }, [detail]);
+  }, [detail, scanList]);
+  const securityTimeline = useMemo(() => {
+    const points = detail?.securityPostureTimeline?.points ?? [];
+    return {
+      ...(detail?.securityPostureTimeline ?? {}),
+      points: points.length > 1 ? points : buildTimelinePointsFromScans(scanList),
+    };
+  }, [detail, scanList]);
 
   const violations = detail?.violations ?? [];
   const attackChains = detail?.attackChains ?? [];
@@ -151,9 +162,10 @@ export default function Dashboard() {
                 {activeNav === "overview" && (
                   <div style={styles.filterRow}>
                     {FILTER_TABS.map((tab) => {
+                      const invariants = detail?.invariants ?? [];
                       const count = tab.id === "all"
-                        ? violations.length
-                        : violations.filter((item) => (item.invariant_source ?? item.source) === tab.id).length;
+                        ? invariants.length
+                        : invariants.filter((inv) => sourceMatches(inv.invariant_source ?? inv.source, tab.id)).length;
                       return (
                         <button key={tab.id} onClick={() => setActiveFilter(tab.id)} style={filterButton(activeFilter === tab.id)}>
                           {tab.label}
@@ -184,6 +196,9 @@ export default function Dashboard() {
                     invariantImpact={detail?.invariantImpact ?? []}
                     evidenceEvents={detail?.evidenceEvents ?? []}
                     assetHistory={assetHistory}
+                    assetEvents={detail?.assetEvents ?? []}
+                    assetHistoryMonthly={detail?.assetHistoryMonthly ?? []}
+                    activeScanId={effectiveScanId}
                   />
                 )}
 
@@ -196,7 +211,7 @@ export default function Dashboard() {
                 )}
 
                 {current.sections.includes("defense") && (
-                  <DefenseSection summary={summary} timeline={detail?.securityPostureTimeline} violations={violations} />
+                  <DefenseSection summary={summary} timeline={securityTimeline} violations={violations} activeScanId={effectiveScanId} scanCoverageMetrics={detail?.scanCoverageMetrics ?? []} />
                 )}
               </>
             )}
@@ -219,6 +234,63 @@ function formatShortDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("ko-KR", { month: "short", day: "numeric" });
+}
+
+function formatShortDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function dateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value ?? "";
+  return date.toISOString().slice(0, 10);
+}
+
+function countByDay(values) {
+  return values.reduce((counts, value) => {
+    const key = dateKey(value);
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function metricOrArrayLength(metric, items) {
+  if (typeof metric === "number") return metric;
+  if (Array.isArray(items)) return items.length;
+  return 0;
+}
+
+function buildTimelinePointsFromScans(scans = []) {
+  return [...scans]
+    .filter((scan) => scan.scan_id && scan.scanned_at)
+    .sort((a, b) => new Date(a.scanned_at) - new Date(b.scanned_at))
+    .map((scan, index, sorted) => {
+      const previous = sorted[index - 1];
+      const assetCount = Number(scan.asset_count ?? 0);
+      const previousAssetCount = Number(previous?.asset_count ?? assetCount);
+      return {
+        run_id: scan.scan_id,
+        created_at: scan.scanned_at,
+        metrics: {
+          asset_count: assetCount,
+          service_count: Number(scan.service_count ?? 0),
+          total_violations: Number(scan.total_violations ?? 0),
+          violated_invariant_count: Number(scan.total_violations ?? 0),
+          asset_with_violation_count: Number(scan.with_violation_count ?? 0),
+          changed_asset_count: index === 0 ? 0 : Math.abs(assetCount - previousAssetCount),
+          new_violation_count: 0,
+          resolved_invariant_count: 0,
+          ai2_chain_scenario_count: Number(scan.attack_chains_count ?? 0),
+        },
+        changed_assets: [],
+        violated_invariants: [],
+        new_violations_since_previous_run: [],
+        resolved_invariants_since_previous_run: [],
+      };
+    });
 }
 
 const styles = {

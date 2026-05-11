@@ -7,7 +7,6 @@ services:
       dockerfile: Dockerfile
     container_name: argos-api-local
     environment:
-      SCAN_DATA_DIR: "/data"
       # 로컬 테스트용 — 실제 VM 없이도 실행됨 (연결 실패 시 빈 데이터로 동작)
       WAZUH_API: "https://localhost:55000"
       DB_NAME: "argos_security"
@@ -15,8 +14,6 @@ services:
       DB_PASSWORD: "argos1234!"
       DB_HOST: "localhost"
       DB_PORT: "5432"
-    volumes:
-      - ./backend-data:/data   # 스캔 결과 로컬 저장
     ports:
       - "8000:8000"            # 직접 API 테스트용 (선택사항)
     restart: unless-stopped

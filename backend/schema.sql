@@ -53,7 +53,7 @@ CREATE TABLE assets (
     vm                  VARCHAR,                   -- argos-ops | argos-dmz 등 (실제 VM과 1:1)
     ip_hint             VARCHAR,
     criticality         VARCHAR                    CHECK (criticality IN ('high', 'medium', 'low', 'unknown')),
-    exposure            VARCHAR                    CHECK (exposure IN ('internet', 'internal', 'isolated', 'unknown')),
+    exposure            VARCHAR                    CHECK (exposure IN ('internet', 'internal', 'isolated', 'unknown', 'public', 'internal_restricted', 'internal_via_dmz', 'internal_via_gateway', 'admin_ip_only')),
     -- 식별 및 소유권
     company_id          VARCHAR,                   -- 테넌트/기업 ID (multi-tenant 환경)
     snapshot_id         VARCHAR,                   -- 자산이 등록된 스냅샷 ID
@@ -289,6 +289,13 @@ CREATE TABLE attack_chain_steps (
     chain_id    VARCHAR NOT NULL REFERENCES attack_chains(chain_scenario_id),
     step_order  INTEGER NOT NULL,
     step_text   TEXT    NOT NULL,
+    path        TEXT,
+    location    TEXT,
+    violation_point      TEXT,
+    transition_to_next   TEXT,
+    related_invariants   JSONB DEFAULT '[]'::jsonb,
+    evidence_ids         JSONB DEFAULT '[]'::jsonb,
+    threatened_asset_ids JSONB DEFAULT '[]'::jsonb,
     UNIQUE (chain_id, step_order)
 );
 
@@ -386,24 +393,6 @@ CREATE INDEX idx_remediations_scan ON remediations (scan_id);
 
 
 -- =============================================================================
--- GROUP 9. AI Pack 생성 스캔 단위 MITRE 전술-불변식 매핑
--- AI Pack의 mitre_flow_invariants export를 저장한다.
--- 기존 mitre_flow_invariants(체인 단위)와 구조가 달라 별도 테이블로 관리.
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS scan_mitre_tactic_map (
-    id              SERIAL      PRIMARY KEY,
-    scan_id         VARCHAR     NOT NULL REFERENCES scans(scan_id),
-    tactic_id       VARCHAR     NOT NULL,
-    invariant_id    VARCHAR     NOT NULL REFERENCES invariants(invariant_id),
-    mapping_basis   TEXT,
-    UNIQUE (scan_id, tactic_id, invariant_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_scan_mitre_tactic_scan ON scan_mitre_tactic_map (scan_id);
-
-
--- =============================================================================
 -- GROUP 8.1 운영 대시보드 집계 테이블
 -- AI Pack DB ingestion export가 이미 계산한 집계값을 저장한다.
 -- 프론트는 이 테이블을 직접 보지 않고 /api/scans/{scan_id}/details 응답만 사용한다.
@@ -432,11 +421,13 @@ CREATE TABLE IF NOT EXISTS scan_type_violations (
 
 CREATE TABLE IF NOT EXISTS scan_coverage (
     scan_id         VARCHAR NOT NULL REFERENCES scans(scan_id),
-    attack_phase    VARCHAR NOT NULL,
+    metric          VARCHAR NOT NULL,
+    value           NUMERIC,
+    attack_phase    VARCHAR,
     total_weight    INTEGER,
     violated_weight INTEGER,
     coverage_pct    INTEGER,
-    PRIMARY KEY (scan_id, attack_phase)
+    PRIMARY KEY (scan_id, metric)
 );
 
 CREATE TABLE IF NOT EXISTS asset_events (
@@ -559,6 +550,23 @@ CREATE TABLE invariant_impact_services (
     service_id  VARCHAR NOT NULL REFERENCES services(service_id),
     PRIMARY KEY (impact_id, service_id)
 );
+
+-- =============================================================================
+-- GROUP 10. AI Pack 생성 스캔 단위 MITRE 전술-불변식 매핑
+-- AI Pack의 mitre_flow_invariants export를 저장한다.
+-- 기존 mitre_flow_invariants(체인 단위)와 구조가 달라 별도 테이블로 관리.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS scan_mitre_tactic_map (
+    scan_id         VARCHAR     NOT NULL REFERENCES scans(scan_id),
+    tactic_id       VARCHAR     NOT NULL,
+    invariant_id    VARCHAR     NOT NULL REFERENCES invariants(invariant_id),
+    mapping_basis   TEXT,
+    PRIMARY KEY (scan_id, tactic_id, invariant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_mitre_tactic_scan ON scan_mitre_tactic_map (scan_id);
+
 
 -- -----------------------------------------------------------------------------
 -- [비활성] 자산 부속 인벤토리 (소프트웨어 / 자격증명 / API)

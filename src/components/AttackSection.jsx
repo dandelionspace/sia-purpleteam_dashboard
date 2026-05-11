@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Badge, ChipList, SectionTitle } from "./common";
+import { sourceMatches } from "../utils/invariantSource";
 
 const NODE_COLORS = [
-  { bg: "#E6F1FB", text: "#0C447C" },
-  { bg: "#CCDFF7", text: "#0C447C" },
-  { bg: "#185FA5", text: "#FFFFFF" },
-  { bg: "#0C447C", text: "#FFFFFF" },
-  { bg: "#042C53", text: "#FFFFFF" },
+  { bg: "#EEF4F8", text: "#24425C" },
+  { bg: "#EEF4F8", text: "#24425C" },
+  { bg: "#EEF4F8", text: "#24425C" },
+  { bg: "#EEF4F8", text: "#24425C" },
+  { bg: "#EEF4F8", text: "#24425C" },
 ];
 
 const ALL_TACTICS = [
@@ -28,13 +29,20 @@ const ALL_TACTICS = [
 
 const TACTIC_NAME_MAP = Object.fromEntries(ALL_TACTICS.map((t) => [t.id, t.name]));
 
-const SEVERITY_COLOR = { Critical: "#E05252", High: "#F0874A", Medium: "#F6C142", Low: "#38A169" };
+const SEVERITY_COLOR = { Critical: "#FEE2E2", High: "#FFEDD5", Medium: "#FEF9C3", Low: "#DCFCE7" };
+const SEVERITY_TEXT  = { Critical: "#B91C1C", High: "#C2410C", Medium: "#A16207", Low: "#15803D" };
 const SEVERITY_BADGE = {
   Critical: { bg: "#FEF1F1", text: "#C53030" },
   High:     { bg: "#FEF4EE", text: "#BF5520" },
   Medium:   { bg: "#FEF9E4", text: "#9C6F00" },
   Low:      { bg: "#F0FDF9", text: "#276749" },
 };
+
+function normalizeSev(sev) {
+  if (!sev) return null;
+  const cap = sev.charAt(0).toUpperCase() + sev.slice(1).toLowerCase();
+  return SEVERITY_ORDER.includes(cap) ? cap : null;
+}
 const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"];
 
 const DETAIL_TABS = [
@@ -46,15 +54,15 @@ const DETAIL_TABS = [
 export default function AttackSection({ attackChains = [], mitreTacticMap = {}, violations = [], activeFilter = "all" }) {
   const filteredViolations = activeFilter === "all"
     ? violations
-    : violations.filter((item) => (item.invariant_source ?? item.source) === activeFilter);
+    : violations.filter((item) => sourceMatches(item.invariant_source ?? item.source, activeFilter));
 
   return (
     <section>
       <MitreHeatmap violations={filteredViolations} mitreTacticMap={mitreTacticMap} />
       <SectionTitle title="AI 공격 체인" subtitle="AI 2가 분석한 공격 시나리오" />
       {attackChains.length ? (
-        attackChains.map((chain) => (
-          <ChainCard key={chain.chain_scenario_id} chain={chain} violations={filteredViolations} />
+        attackChains.map((chain, index) => (
+          <ChainCard key={chain.chain_scenario_id} chain={chain} chainIndex={index + 1} violations={filteredViolations} />
         ))
       ) : (
         <div style={styles.card}>No AI2 chain reports were returned.</div>
@@ -91,7 +99,7 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
   (mitreTacticMap?.tactics ?? []).forEach((tactic) => {
     const tacticId = tactic.tactic_id;
     if (!tacticId) return;
-    const invIds = asArray(tactic.violated_invariants ?? tactic.invariants);
+    const invIds = asArray(tactic.violated_invariants ?? tactic.invariants).map(invariantRefId).filter(Boolean);
     if (!invIds.length) return;
     const linked = invIds.map((id) => violationById[id]).filter(Boolean);
     if (!linked.length) return;
@@ -119,7 +127,6 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4, marginBottom: 4 }}>
               {ALL_TACTICS.map((tac) => {
                 const isActive = Boolean(tacticViolMap[tac.id]?.length);
-                const isSelected = selected?.tactic_id === tac.id;
                 return (
                   <button
                     key={tac.id}
@@ -130,11 +137,11 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
                       padding: "5px 2px",
                       borderRadius: 4,
                       cursor: isActive ? "pointer" : "default",
-                      border: isSelected ? "2px solid #378ADD" : "1px solid transparent",
-                      background: isActive ? "#185FA5" : "#F1F5F9",
-                      color: isActive ? "#fff" : "#94A3B8",
+                      border: "none",
+                      background: "transparent",
+                      color: isActive ? "#1E293B" : "#94A3B8",
                       textAlign: "center",
-                      fontWeight: isActive ? 700 : 400,
+                      fontWeight: isActive ? 600 : 400,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -146,35 +153,37 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
               })}
             </div>
 
-            {/* 기법 셀 */}
+            {/* 불변식 셀 */}
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_TACTICS.length}, 1fr)`, gap: 4 }}>
               {ALL_TACTICS.map((tac) => {
-                const techniques = [...(tacticTechMap[tac.id] ?? [])];
                 const violsForTac = tacticViolMap[tac.id] ?? [];
                 return (
                   <div key={tac.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                    {techniques.map((techId) => {
-                      const sev = SEVERITY_ORDER.find((s) =>
-                        violsForTac.filter((v) => v.mitre_technique === techId).some((v) => v.severity === s)
-                      );
+                    {violsForTac.map((v) => {
+                      const invId = v.invariant_id ?? v.id;
+                      const sev = normalizeSev(v.severity);
                       return (
                         <div
-                          key={techId}
+                          key={invId}
                           onClick={() => handleClick(tac)}
-                          title={techId}
+                          title={`${invId}${v.summary ? ` — ${v.summary}` : ""}`}
                           style={{
                             height: 36, borderRadius: 3, cursor: "pointer",
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            fontSize: 9, fontWeight: 500, textAlign: "center",
+                            fontSize: 9, fontWeight: 700, textAlign: "center",
+                            padding: "0 2px",
                             background: SEVERITY_COLOR[sev] ?? "#E6F1FB",
-                            color: sev ? "#fff" : "#0C447C",
+                            color: SEVERITY_TEXT[sev] ?? "#0C447C",
                             outline: selected?.tactic_id === tac.id ? "2px solid #378ADD" : "none",
                             outlineOffset: 1,
                             opacity: selected && selected.tactic_id !== tac.id ? 0.5 : 1,
                             transition: "opacity 0.15s",
+                            overflow: "hidden",
+                            whiteSpace: "nowrap",
+                            textOverflow: "ellipsis",
                           }}
                         >
-                          {techId}
+                          {invId}
                         </div>
                       );
                     })}
@@ -189,7 +198,7 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
         <div style={{ display: "flex", gap: 14, marginTop: 10 }}>
           {SEVERITY_ORDER.map((s) => (
             <span key={s} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#73726c" }}>
-              <span style={{ width: 12, height: 12, borderRadius: 2, background: SEVERITY_COLOR[s], display: "inline-block" }} />
+              <span style={{ width: 12, height: 12, borderRadius: 2, background: SEVERITY_COLOR[s], border: `1px solid ${SEVERITY_TEXT[s]}`, display: "inline-block" }} />
               {s}
             </span>
           ))}
@@ -210,7 +219,7 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
                 연결된 불변식 위반 항목 {selected.linkedViolations.length}개
               </p>
               {selected.linkedViolations.map((v) => {
-                const sc = SEVERITY_BADGE[v.severity] ?? { bg: "#f1efea", text: "#73726c" };
+                const sc = SEVERITY_BADGE[normalizeSev(v.severity)] ?? { bg: "#f1efea", text: "#73726c" };
                 return (
                   <div key={v.invariant_id ?? v.id} style={{
                     display: "flex", alignItems: "center", gap: 10,
@@ -239,25 +248,23 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
 
 // ── 공격 체인 카드 ───────────────────────────────────────────────────────────
 
-function ChainCard({ chain, violations = [] }) {
+function ChainCard({ chain, chainIndex, violations = [] }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("flow");
   const steps = normalizeChainSteps(chain, violations);
   const riskScore = getExplicitRiskScore(chain);
   const title = chain.title ?? chain.executive_summary ?? "Untitled attack chain";
-  const summary = chain.scenario_basis?.summary ?? chain.executive_summary ?? chain.testability_reason;
 
   return (
     <article style={styles.card}>
       <div style={styles.chainHeader}>
         <div style={{ minWidth: 0 }}>
-          <h3 style={styles.chainTitle}>{title}</h3>
+          <h3 style={styles.chainTitle}>{chainIndex}. {title}</h3>
           <div style={styles.metaRow}>
             <span style={styles.chainId}>{chain.chain_scenario_id}</span>
             {chain.risk_level && <Badge value={capitalize(chain.risk_level)} />}
             {riskScore !== null && <span style={styles.riskScore}>위험도 {riskScore}</span>}
           </div>
-          {summary && <p style={styles.summary}>{summary}</p>}
           <ChipList values={chain.related_invariants} />
         </div>
         <button style={styles.smallButton} onClick={() => setOpen((value) => !value)}>
@@ -312,11 +319,10 @@ function KillChainList({ steps = [] }) {
   if (!steps.length) return <p style={styles.emptyText}>공격 흐름 데이터가 없습니다.</p>;
   return (
     <div>
-      {steps.map((step) => (
+      {steps.map((step, index) => (
         <div key={`${step.order}-${stepTitle(step)}`} style={styles.killChainItem}>
           <div style={styles.killChainIndex}>
-            <span>{step.order}</span>
-            {step.tactic && <small>{step.tactic}</small>}
+            <span>{index + 1}</span>
           </div>
           <div style={{ flex: 1 }}>
             <div style={styles.mitreMeta}>
@@ -372,7 +378,7 @@ function EvidenceAssetList({ steps = [] }) {
           <DetailLine label="Evidence" value={<ChipList values={step.evidence_ids} />} />
           <DetailLine label="관련 자산" value={<ChipList values={step.threatened_asset_ids} />} />
           <DetailLine label="관련 불변식" value={<ChipList values={step.related_invariants} />} />
-          <DetailLine label="Reason" value={step.reason} />
+          <DetailLine label="Reason" value={step.violation_point || step.reason} />
         </div>
       ))}
     </div>
@@ -392,30 +398,28 @@ function normalizeChainSteps(chain, violations) {
     const order = flow.order ?? flow.flow_order ?? raw.order ?? raw.step_order ?? index + 1;
     const tactic = flow.tactic ?? raw.tactic ?? raw.tactic_id;
     const technique = flow.technique ?? raw.technique ?? raw.technique_id;
-    const related = unique([
+    const stepRelated = unique([
       ...asArray(flow.related_invariants),
       ...asArray(raw.related_invariants ?? raw.violation_ids ?? raw.violated_invariants),
-      ...asArray(chain.related_invariants),
     ]);
+    const related = stepRelated.length ? stepRelated : asArray(chain.related_invariants);
     const linkedViolations = violations.filter((violation) => related.includes(violation.invariant_id ?? violation.id));
     const fallbackViolation = linkedViolations[index % Math.max(linkedViolations.length, 1)];
-    const isStepId = attackStep && /^chain-.+-step-\d+$/i.test(String(attackStep));
-    const stepText = isStepId
-      ? attackStep
-      : firstUsefulText(
-          flow.step,
-          attackStep,
-          raw.finding,
-          raw.step,
-          raw.title,
-          raw.path,
-          raw.chain_transition,
-          raw.reason,
-          chain.scenario_basis?.summary,
-          chain.testability_reason,
-          fallbackViolation?.summary,
-          fallbackViolation?.reason
-        );
+    const stepText = firstUsefulText(
+      flow.step,
+      raw.step,
+      raw.finding,
+      raw.violation_point,
+      raw.title,
+      raw.path,
+      attackStep,
+      raw.chain_transition,
+      raw.reason,
+      chain.scenario_basis?.summary,
+      chain.testability_reason,
+      fallbackViolation?.summary,
+      fallbackViolation?.reason
+    );
 
     return {
       order,
@@ -424,7 +428,8 @@ function normalizeChainSteps(chain, violations) {
       technique,
       technique_name: flow.technique_name ?? raw.technique_name,
       step: stepText,
-      reason: firstUsefulText(flow.reason, raw.chain_transition, raw.reason, fallbackViolation?.reason),
+      violation_point: firstUsefulText(raw.violation_point, raw.finding),
+      reason: firstUsefulText(raw.chain_transition, raw.transition_to_next, raw.reason, flow.reason, fallbackViolation?.reason),
       related_invariants: related,
       evidence_ids: unique([
         ...asArray(raw.evidence_ids ?? raw.evidence_refs ?? raw.matched_evidence_ids),
@@ -456,7 +461,11 @@ function flowNodeLabel(step) {
 
 function stepTitle(step) {
   const title = firstUsefulText(step.step, formatTechniqueLabel(step), formatTacticLabel(step));
-  return title || "공격 흐름 정보 없음";
+  return stripLeadingStepNumber(title) || "공격 흐름 정보 없음";
+}
+
+function stripLeadingStepNumber(value) {
+  return value ? String(value).replace(/^\s*\d+(?:\.\d+)*[.)]\s*/, "") : "";
 }
 
 function formatTacticLabel(step) {
@@ -496,6 +505,12 @@ function asArray(value) {
   return value ? [value] : [];
 }
 
+function invariantRefId(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  return value.invariant_id ?? value.id ?? value.result_id ?? null;
+}
+
 function unique(values) {
   return [...new Set(asArray(values))];
 }
@@ -510,14 +525,13 @@ const styles = {
   chainTitle: { margin: "0 0 8px", fontSize: 14, color: "#1a1a18", lineHeight: 1.45 },
   metaRow: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 },
   chainId: { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 11, color: "#0b2f57", overflowWrap: "anywhere" },
-  summary: { margin: "0 0 10px", color: "#73726c", fontSize: 12, lineHeight: 1.6 },
   smallButton: { border: "0.5px solid rgba(0,0,0,0.12)", background: "#fff", color: "#73726c", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 12 },
   riskScore: { fontSize: 11, fontWeight: 700, background: "#E6F1FB", color: "#0C447C", padding: "3px 10px", borderRadius: 999 },
-  flowRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "center", margin: "12px 0 6px" },
+  flowRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-start", margin: "12px 0 6px" },
   flowItem: { display: "flex", alignItems: "center", gap: 6 },
-  flowNode: { padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, minWidth: 110, maxWidth: 170, minHeight: 34, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", lineHeight: 1.25 },
+  flowNode: { padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, minWidth: 110, maxWidth: 170, minHeight: 34, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", lineHeight: 1.25, border: "0.5px solid #DCE6EE" },
   flowStep: { display: "none" },
-  flowArrow: { fontSize: 16, color: "#94A3B8" },
+  flowArrow: { fontSize: 16, color: "#B7C3CE" },
   expandedPanel: { marginTop: 16, borderTop: "0.5px solid rgba(0,0,0,0.08)", paddingTop: 14 },
   tabRow: { display: "flex", gap: 4, marginBottom: 14 },
   killChainItem: { display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 0", borderBottom: "0.5px solid rgba(0,0,0,0.06)" },

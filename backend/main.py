@@ -6,6 +6,7 @@ Argos Dashboard API — argos-security (10.10.8.2) 에서 실행
   GET  /api/scans/{scan_id}/details      — 스캔 세부 결과
   POST /api/scans/trigger                — 새 스캔 실행 (백그라운드)
   POST /api/scans/{scan_id}/pentest      — Red Team 결과 저장
+  DELETE /api/scans/{scan_id}/pentest/{test_id} — Red Team 결과 삭제
 
   POST /api/ai1/results                  — AI 1 불변식 판단 결과 수신 (최신 스캔에 반영)
   POST /api/ai2/scenarios                — AI 2 체인 시나리오 수신 (최신 스캔에 반영)
@@ -14,17 +15,16 @@ Argos Dashboard API — argos-security (10.10.8.2) 에서 실행
 
 스토리지 전략:
   - PostgreSQL (argos_security DB) 가 가용할 때: 스캔 목록/세부 정보를 DB에서 읽고 씀
-  - psycopg2 미설치 또는 DB 연결 실패 시: 파일 기반 JSON 폴백 사용
+  - 런타임 JSON 파일 저장소는 사용하지 않음
 """
 
 import json
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,13 +37,18 @@ from scanner import (
     _fetch_db_violations_for_scan, _fetch_db_attack_chains_for_scan,
     _fetch_db_pentest_results_for_scan, _fetch_db_remediations_for_scan,
     _fetch_db_assets, _fetch_db_services, _fetch_db_evidence_events,
-    _build_mitre_mapping_from_chains, _calc_coverage,
+    _fetch_db_invariant_impact_for_scan,
+    _fetch_db_scan_coverage_metrics,
+    _fetch_db_asset_events,
+    _fetch_db_asset_history_monthly,
+    _build_mitre_mapping, _fetch_scan_mitre_tactic_map, _calc_coverage,
     _build_initial_invariants, _fetch_invariant_defs,
     _calc_severity_dist, _calc_zone_violations, _calc_type_violations,
-    _save_scan_to_db, save_pentest_to_db,
+    _save_scan_to_db, save_pentest_to_db, delete_pentest_from_db,
     HAS_PSYCOPG2,
 )
 from ingestion import ingest_dashboard_export
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,63 +56,52 @@ logging.basicConfig(
 )
 log = logging.getLogger("argos-api")
 
-# ── 파일 기반 폴백 스토리지 ────────────────────────────────────────────────────
-DATA_DIR        = Path(os.getenv("SCAN_DATA_DIR", "/data"))
-SCAN_LIST_FILE  = DATA_DIR / "scans.json"
-SCAN_DETAIL_DIR = DATA_DIR / "scan_details"
-INGEST_STATUS_FILE = DATA_DIR / "ingest_status.json"
+AI_LATEST_DIR = Path(os.getenv("AI_PACK_LATEST_DIR", "/opt/argos/security/ai_runtime/dashboard_api/latest"))
 
+# ── AI Pack 최신 파일 읽기 헬퍼 ──────────────────────────────────────────────
 
-def _init_storage() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SCAN_DETAIL_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCAN_LIST_FILE.exists():
-        SCAN_LIST_FILE.write_text("[]", encoding="utf-8")
-
-
-def _file_load_scan_list() -> list:
-    try:
-        return json.loads(SCAN_LIST_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
-
-def _file_save_scan_list(scans: list) -> None:
-    SCAN_LIST_FILE.write_text(
-        json.dumps(scans, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def _file_load_scan_detail(scan_id: str) -> Optional[dict]:
-    path = SCAN_DETAIL_DIR / f"{scan_id}.json"
+def _ai_latest_json(name: str, default=None):
+    path = AI_LATEST_DIR / name
     if not path.exists():
-        return None
+        return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return None
+        log.warning("AI Pack latest JSON read failed: %s", path)
+        return default
 
 
-def _file_save_scan_detail(scan_id: str, detail: dict) -> None:
-    path = SCAN_DETAIL_DIR / f"{scan_id}.json"
-    path.write_text(
-        json.dumps(detail, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+def _ai_latest_run_id() -> str | None:
+    export = _ai_latest_json("dashboard-db-ingestion-export.json", {})
+    return export.get("run_id") or export.get("scan_id")
 
 
-def _file_load_ingest_status() -> dict:
-    if not INGEST_STATUS_FILE.exists():
-        return {"status": "setup_required", "message": "No AI Pack DB ingestion export has been ingested yet."}
-    try:
-        return json.loads(INGEST_STATUS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {"status": "unknown", "message": "Unable to read ingest status."}
+def _augment_latest_detail_from_ai_pack(scan_id: str, detail: dict) -> dict:
+    """최신 AI Pack 스캔인 경우 파일 기반 데이터로 detail을 보강한다."""
+    if scan_id != _ai_latest_run_id():
+        return detail
+
+    ai2     = _ai_latest_json("ai2-chain-scenarios.json", {})
+    mitre   = _ai_latest_json("mitre-tactic-map.json", {})
+    timeline = _ai_latest_json("security-posture-timeline.json", {})
+
+    chains = ai2.get("scenarios") if isinstance(ai2, dict) else None
+    if chains:
+        detail["attackChains"] = chains
+
+    if mitre:
+        detail["mitreTacticMap"] = mitre
+    if timeline:
+        detail["securityPostureTimeline"] = timeline
+
+    return detail
 
 
-def _file_save_ingest_status(status: dict) -> None:
-    INGEST_STATUS_FILE.write_text(
-        json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+# ── DB ingestion 상태 ────────────────────────────────────────────────────────
+LAST_INGEST_STATUS: dict = {
+    "status": "unknown",
+    "message": "No AI Pack DB ingestion has run in this API process yet.",
+}
 
 
 # ── DB 기반 스캔 세부 데이터 조립 ─────────────────────────────────────────────
@@ -123,12 +117,16 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
     attack_chains = _fetch_db_attack_chains_for_scan(scan_id)
     pentest       = _fetch_db_pentest_results_for_scan(scan_id)
     remediations  = _fetch_db_remediations_for_scan(scan_id)
+    impact        = _fetch_db_invariant_impact_for_scan(scan_id)
+    scan_coverage = _fetch_db_scan_coverage_metrics(scan_id)
+    asset_events  = _fetch_db_asset_events()
+    asset_history = _fetch_db_asset_history_monthly()
     assets        = _fetch_db_assets()
     services      = _fetch_db_services()
     evidence      = _fetch_db_evidence_events()
     inv_defs      = _fetch_invariant_defs()
+    timeline      = _build_security_posture_timeline()
 
-    # violations 가 없고 파일에 있으면 DB에 아직 AI1 결과가 없는 것 → None 반환하면 파일 폴백
     # violations 가 비어있어도 스캔 자체는 존재할 수 있으므로 빈 detail 반환
 
     # invariants 목록 생성 후 violations 상태 병합 (위험도·상태가 "미점검"으로만 뜨는 문제 수정)
@@ -145,74 +143,105 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
             inv["current_environment_testable"] = v.get("current_environment_testable", False)
             inv["testability_reason"]           = v.get("testability_reason", "")
 
+    invariant_total = len(inv_list)
+    violated_count = len([v for v in violations if v.get("status") == "violated"])
+    applied_count = max(invariant_total - violated_count, 0)
+
     detail = {
         "summary": {
-            "total_violations": len(violations),
-            "critical_high":    sum(1 for v in violations if v.get("severity") in ("Critical", "High")),
-            "attack_chains":    len(attack_chains),
+            "total_violations":        violated_count,
+            "violated_invariant_count": violated_count,
+            "applied_invariant_count":  applied_count,
+            "invariant_total":         invariant_total,
+            "critical_high":           sum(1 for v in violations if v.get("severity") in ("Critical", "High")),
+            "attack_chains":           len(attack_chains),
         },
         "violations":           violations,
         "severityDistribution": _calc_severity_dist(violations),
         "zoneViolations":       _calc_zone_violations(violations),
         "typeViolations":       _calc_type_violations(violations),
         "attackChains":         attack_chains,
-        "mitreMapping":         _build_mitre_mapping_from_chains(attack_chains, violations),
+        "mitreMapping":         _build_mitre_mapping(violations, _fetch_scan_mitre_tactic_map(scan_id)),
         "pentestResults":       pentest,
+        "invariantImpact":      impact,
+        "scanCoverageMetrics":  scan_coverage,
         "coverage":             _calc_coverage(violations),
         "invariants":           inv_list,
         "assets":               assets,
         "services":             services,
         "evidenceEvents":       evidence,
         "remediations":         remediations,
-        # 비활성 테이블 관련 키
-        # "assetHistory":       [],  # [비활성] asset_history_monthly 테이블 미구현
-        # "assetEvents":        [],  # [비활성] asset_events 테이블 미구현
-        # "assetPolicies":      [],  # [비활성] invariant_impact 테이블 미구현
-        # "softwareAssets":     [],  # [비활성] software_assets 테이블 미구현
-        # "credentialAssets":   [],  # [비활성] credential_assets 테이블 미구현
-        # "apiAssets":          [],  # [비활성] api_assets 테이블 미구현
+        "assetEvents":          asset_events,
+        "assetHistoryMonthly":  asset_history,
+        "securityPostureTimeline": timeline,
     }
-    return detail
+    return _augment_latest_detail_from_ai_pack(scan_id, detail)
 
 
-# ── 통합 스캔 목록 로드 (DB 우선, 파일 폴백) ─────────────────────────────────
+def _build_security_posture_timeline() -> dict:
+    """스캔별 위반 invariant_id 집합을 비교해 자산/위반 추이 타임라인을 만든다."""
+    scans = fetch_scan_list_from_db()
+    sorted_scans = sorted(
+        [scan for scan in scans if scan.get("scan_id") and scan.get("scanned_at")],
+        key=lambda scan: scan.get("scanned_at") or "",
+    )
+    points = []
+    previous_violation_ids = set()
+    for index, scan in enumerate(sorted_scans):
+        scan_id = scan.get("scan_id")
+        asset_count = int(scan.get("asset_count") or 0)
+        previous_asset_count = int(sorted_scans[index - 1].get("asset_count") or asset_count) if index > 0 else asset_count
+        violation_ids = _fetch_violated_invariant_ids(scan_id)
+        if not violation_ids:
+            violation_ids = set()
+        new_violation_ids = sorted(violation_ids - previous_violation_ids) if index > 0 else []
+        resolved_invariant_ids = sorted(previous_violation_ids - violation_ids) if index > 0 else []
+        violation_count = len(violation_ids) if violation_ids else int(scan.get("total_violations") or 0)
+        points.append({
+            "run_id": scan_id,
+            "created_at": scan.get("scanned_at"),
+            "metrics": {
+                "asset_count": asset_count,
+                "service_count": int(scan.get("service_count") or 0),
+                "total_violations": violation_count,
+                "violated_invariant_count": violation_count,
+                "asset_with_violation_count": int(scan.get("with_violation_count") or 0),
+                "changed_asset_count": 0 if index == 0 else abs(asset_count - previous_asset_count),
+                "new_violation_count": len(new_violation_ids),
+                "resolved_invariant_count": len(resolved_invariant_ids),
+                "ai2_chain_scenario_count": int(scan.get("attack_chains_count") or 0),
+            },
+            "changed_assets": [],
+            "violated_invariants": sorted(violation_ids),
+            "new_violations_since_previous_run": new_violation_ids,
+            "resolved_invariants_since_previous_run": resolved_invariant_ids,
+        })
+        previous_violation_ids = violation_ids
+    return {"points": points}
+
+
+def _fetch_violated_invariant_ids(scan_id: str) -> set[str]:
+    """특정 스캔에서 violated 상태인 invariant_id 집합을 반환한다."""
+    if not scan_id:
+        return set()
+    return {
+        item.get("invariant_id")
+        for item in _fetch_db_violations_for_scan(scan_id)
+        if item.get("status") == "violated" and item.get("invariant_id")
+    }
+
+
+# ── 통합 스캔 목록 로드 (DB 전용) ────────────────────────────────────────────
 
 def _load_scan_list() -> list:
-    if HAS_PSYCOPG2:
-        db_list = fetch_scan_list_from_db()
-        if db_list:
-            return db_list
-    return _file_load_scan_list()
+    return fetch_scan_list_from_db()
 
 
 def _load_scan_detail(scan_id: str) -> Optional[dict]:
-    if HAS_PSYCOPG2:
-        detail = _db_load_scan_detail(scan_id)
-        if detail is not None:
-            return detail
-    return _file_load_scan_detail(scan_id)
-
-
-def _save_scan_list(scans: list) -> None:
-    """파일에 저장. DB 저장은 개별 scan 쓰기 함수에서 처리."""
-    _file_save_scan_list(scans)
-
-
-def _save_scan_detail(scan_id: str, detail: dict) -> None:
-    """파일 폴백에 저장. DB 저장은 ai1/ai2 함수에서 처리."""
-    _file_save_scan_detail(scan_id, detail)
+    return _db_load_scan_detail(scan_id)
 
 
 # ── scan_item 헬퍼 ────────────────────────────────────────────────────────────
-
-def _upsert_scan_item(scans: list, item: dict) -> list:
-    scan_id = item.get("scan_id")
-    if not scan_id:
-        return scans
-    updated = [item]
-    updated.extend(s for s in scans if s.get("scan_id") != scan_id)
-    return updated
-
 
 def _dedupe_scan_list(scans: list) -> list:
     seen = set()
@@ -264,31 +293,16 @@ def _empty_scan_item(scan_id: str, status: str = "running") -> dict:
 def _do_scan(scan_id: str) -> None:
     log.info("스캔 시작: %s", scan_id)
     try:
-        scan_item, scan_detail = run_scan(scan_id)
+        scan_item, _ = run_scan(scan_id)
     except Exception as e:
         log.error("스캔 실패 (%s): %s", scan_id, e)
         scan_item  = {**_empty_scan_item(scan_id, "failed")}
-        scan_detail = {
-            "summary":              {"total_violations": 0, "critical_high": 0, "attack_chains": 0},
-            "violations":           [],
-            "invariants":           [],
-            "severityDistribution": [],
-            "zoneViolations":       [],
-            "typeViolations":       [],
-            "attackChains":         [],
-            "mitreMapping":         [],
-            "pentestResults":       [],
-            "coverage":             {},
-            "assets":               [],
-            "services":             [],
-            "evidenceEvents":       [],
-            "remediations":         [],
-        }
-
-    scans = _file_load_scan_list()
-    scans = _upsert_scan_item(scans, scan_item)
-    _file_save_scan_list(scans)
-    _file_save_scan_detail(scan_id, scan_detail)
+        if HAS_PSYCOPG2:
+            _save_scan_to_db(
+                scan_id=scan_id,
+                scanned_at=datetime.utcnow(),
+                status="failed",
+            )
     log.info("스캔 완료: %s (score=%s, violations=%s)",
              scan_id, scan_item["score"], scan_item["total_violations"])
 
@@ -297,7 +311,6 @@ def _do_scan(scan_id: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _init_storage()
     ensure_invariants_table()
     # 저장된 스캔이 없으면 최초 스캔 한 번 자동 실행
     if not _load_scan_list():
@@ -324,8 +337,6 @@ def get_scans():
     """스캔 목록 반환 (최신 순). schema.sql scans 컬럼 기준 flat 형식."""
     scans   = _load_scan_list()
     deduped = _dedupe_scan_list(scans)
-    if len(deduped) != len(scans) and not HAS_PSYCOPG2:
-        _file_save_scan_list(deduped)
     return deduped
 
 
@@ -345,13 +356,6 @@ def trigger_scan(background_tasks: BackgroundTasks):
     scans   = _load_scan_list()
     scan_id = _next_scan_id(scans)
 
-    placeholder = _empty_scan_item(scan_id, "running")
-
-    # 파일 폴백에 running 상태 등록
-    file_scans = _file_load_scan_list()
-    file_scans = _upsert_scan_item(file_scans, placeholder)
-    _file_save_scan_list(file_scans)
-
     # DB에도 running 상태로 등록
     if HAS_PSYCOPG2:
         _save_scan_to_db(
@@ -370,8 +374,9 @@ def ingest_db_ingestion_export(export: dict):
     AI Pack dashboard-db-ingestion-export.json 또는 내부 central_api 응답을 받아
     PostgreSQL 테이블에 upsert한다. UI는 이 export를 직접 렌더링하지 않는다.
     """
+    global LAST_INGEST_STATUS
     result = ingest_dashboard_export(export)
-    _file_save_ingest_status(result)
+    LAST_INGEST_STATUS = result
     if result["status"] == "failed":
         raise HTTPException(status_code=500, detail=result)
     if result["status"] == "db_unavailable":
@@ -409,22 +414,29 @@ def save_pentest_result(scan_id: str, result: RedTeamResult):
     """Red Team 결과를 저장한다. test_id 기준으로 upsert."""
     # DB 저장 (schema.sql GROUP 7)
     result_dict = result.model_dump()
+    db_saved = False
     if HAS_PSYCOPG2:
-        save_pentest_to_db(scan_id, result_dict)
+        db_saved = save_pentest_to_db(scan_id, result_dict)
 
-    # 파일 폴백 갱신
-    detail = _file_load_scan_detail(scan_id)
-    if detail is not None:
-        results: list = detail.get("pentestResults", [])
-        idx = next((i for i, r in enumerate(results) if r.get("test_id") == result.test_id), None)
-        if idx is not None:
-            results[idx] = result_dict
-        else:
-            results.append(result_dict)
-        detail["pentestResults"] = results
-        _file_save_scan_detail(scan_id, detail)
+    return {
+        "status": "ok" if db_saved else "db_failed",
+        "test_id": result.test_id,
+        "db_saved": db_saved,
+    }
 
-    return {"status": "ok", "test_id": result.test_id}
+
+@app.delete("/api/scans/{scan_id}/pentest/{test_id}", status_code=200)
+def delete_pentest_result(scan_id: str, test_id: str):
+    """Red Team 결과를 test_id 기준으로 삭제한다."""
+    db_deleted = False
+    if HAS_PSYCOPG2:
+        db_deleted = delete_pentest_from_db(scan_id, test_id)
+
+    return {
+        "status": "ok" if db_deleted else "not_found",
+        "test_id": test_id,
+        "db_deleted": db_deleted,
+    }
 
 
 # ── 불변식 정의 관리 ─────────────────────────────────────────────────────────────
@@ -460,16 +472,15 @@ def create_invariant(body: InvariantDefBody):
 @app.get("/api/health")
 def health():
     scans = _load_scan_list()
-    ingest_status = _file_load_ingest_status()
     return {
         "status":      "ok",
         "service":     "purpleteam-dashboard-api",
         "total_scans": len(scans),
         "postgresql": {
             "status": "connected" if HAS_PSYCOPG2 else "unavailable",
-            "mode": "postgresql" if HAS_PSYCOPG2 else "file_fallback",
+            "mode": "postgresql",
         },
-        "ai_pack_ingest": ingest_status,
+        "ai_pack_ingest": LAST_INGEST_STATUS,
     }
 
 
@@ -528,8 +539,7 @@ def receive_ai1_results(bundle: AI1Bundle):
 
     latest_id = scans[0]["scan_id"]
 
-    # 세부 데이터 로드 (DB 우선, 파일 폴백)
-    detail = _file_load_scan_detail(latest_id) or _db_load_scan_detail(latest_id) or {}
+    detail = _db_load_scan_detail(latest_id) or {}
     if not detail:
         detail = {
             "summary": {"total_violations": 0, "critical_high": 0, "attack_chains": 0},
@@ -540,13 +550,7 @@ def receive_ai1_results(bundle: AI1Bundle):
     all_results    = [r.model_dump() for r in bundle.items]
     violated_count = sum(1 for r in all_results if r["status"] == "violated")
 
-    updated_detail, updated_item = ai1_to_scan_detail(detail, scans[0], all_results)
-
-    # 파일 폴백 갱신
-    file_scans = _file_load_scan_list()
-    file_scans = [updated_item if s["scan_id"] == latest_id else s for s in file_scans]
-    _file_save_scan_list(file_scans)
-    _file_save_scan_detail(latest_id, updated_detail)
+    ai1_to_scan_detail(detail, scans[0], all_results)
 
     log.info("AI 1 결과 수신: scan=%s, violated=%d/%d",
              latest_id, violated_count, len(all_results))
@@ -569,6 +573,7 @@ class ValidationGuide(BaseModel):
     steps:              list[str]    = []
     success_criteria:   list[str]    = []
     evidence_to_collect: list[str]   = []
+    validation_requests: list[Any]   = []
     safety_boundary:    list[str]    = []
 
 
@@ -589,6 +594,8 @@ class AI2Scenario(BaseModel):
     current_environment_testable: bool                   = False
     testability_reason:           str                    = ""
     related_invariants:           list[str]              = []
+    chain_steps:                  list[dict[str, Any]]   = []
+    asset_threats:                 list[dict[str, Any]]   = []
     attack_chain:                 list[str]              = []
     mitre_attack_flow:            list[MitreStep]        = []
     manual_validation_guide:      Optional[ValidationGuide] = None
@@ -602,7 +609,7 @@ def receive_ai2_scenarios(scenarios: list[AI2Scenario]):
         raise HTTPException(status_code=404, detail="저장된 스캔이 없습니다.")
 
     latest_id = scans[0]["scan_id"]
-    detail    = _file_load_scan_detail(latest_id) or _db_load_scan_detail(latest_id) or {}
+    detail    = _db_load_scan_detail(latest_id) or {}
     if not detail:
         detail = {
             "summary": {"total_violations": 0, "critical_high": 0, "attack_chains": 0},
@@ -611,13 +618,7 @@ def receive_ai2_scenarios(scenarios: list[AI2Scenario]):
         }
 
     scenario_dicts = [s.model_dump() for s in scenarios]
-    updated_detail, updated_item = ai2_to_scan_detail(detail, scans[0], scenario_dicts)
-
-    # 파일 폴백 갱신
-    file_scans = _file_load_scan_list()
-    file_scans = [updated_item if s["scan_id"] == latest_id else s for s in file_scans]
-    _file_save_scan_list(file_scans)
-    _file_save_scan_detail(latest_id, updated_detail)
+    ai2_to_scan_detail(detail, scans[0], scenario_dicts)
 
     log.info("AI 2 시나리오 수신: scan=%s, scenarios=%d", latest_id, len(scenarios))
     return {"status": "ok", "scan_id": latest_id, "scenario_count": len(scenarios)}

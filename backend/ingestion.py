@@ -111,7 +111,41 @@ def _rows_for_table(export: dict, table_name: str) -> list[dict]:
     value = tables.get(table_name, [])
     if isinstance(value, dict):
         value = value.get("rows", value.get("items", []))
-    return value if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    # export 필드명 → DB 컬럼명 매핑
+    if table_name == "invariants":
+        mapped = []
+        for row in value:
+            if not isinstance(row, dict):
+                continue
+            r = dict(row)
+            if "title" in r and "description" not in r:
+                r["description"] = r.pop("title") or r.get("invariant_id", "")
+            if "catalog_status" in r and "approval_status" not in r:
+                s = r.pop("catalog_status")
+                r["approval_status"] = s if s in ("approved", "draft") else "approved"
+            if "source" in r and "invariant_source" not in r:
+                s = r.pop("source")
+                r["invariant_source"] = s if s in ("fixed", "variable", "custom") else "fixed"
+            # description이 invariant_id와 같으면 플레이스홀더이므로 제거 (기존 값 보존)
+            if r.get("description") == r.get("invariant_id"):
+                r.pop("description", None)
+            mapped.append(r)
+        return mapped
+    if table_name == "services":
+        mapped = []
+        for row in value:
+            if not isinstance(row, dict):
+                continue
+            r = dict(row)
+            if "service_name" in r and "name" not in r:
+                r["name"] = r.pop("service_name")
+            if "owning_asset" in r and "owning_asset_id" not in r:
+                r["owning_asset_id"] = r.pop("owning_asset")
+            mapped.append(r)
+        return mapped
+    return value
 
 
 def _sanitize_row(table_name: str, row: dict, allowed_columns: list[str]) -> dict:
@@ -123,6 +157,12 @@ def _sanitize_row(table_name: str, row: dict, allowed_columns: list[str]) -> dic
             if key.lower() not in BLOCKED_EVIDENCE_FIELDS
         }
     return filtered
+
+
+# ingest 시 ON CONFLICT UPDATE에서 덮어쓰지 않을 컬럼 (사용자가 직접 설정한 값 보호)
+_PRESERVE_ON_CONFLICT: dict[str, set[str]] = {
+    "invariants": {"invariant_source", "state", "approval_status"},
+}
 
 
 def _upsert_rows(cur, table_name: str, rows: list[dict]) -> int:
@@ -144,7 +184,8 @@ def _upsert_rows(cur, table_name: str, rows: list[dict]) -> int:
 
     insert_columns = [column for column in columns if any(column in row for row in sanitized)]
     values = [tuple(row.get(column) for column in insert_columns) for row in sanitized]
-    update_columns = [column for column in insert_columns if column not in pk_columns]
+    preserve = _PRESERVE_ON_CONFLICT.get(table_name, set())
+    update_columns = [column for column in insert_columns if column not in pk_columns and column not in preserve]
 
     conflict = ", ".join(pk_columns)
     assignments = ", ".join(f"{column} = EXCLUDED.{column}" for column in update_columns)

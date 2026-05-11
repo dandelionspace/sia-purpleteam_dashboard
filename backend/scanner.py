@@ -37,7 +37,7 @@ from invariants import (
 
 log = logging.getLogger("scanner")
 
-DB_HOST = os.getenv("DB_HOST", "10.10.4.2")
+DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "argos_security")
 DB_USER = os.getenv("DB_USER", "argos_app")
@@ -256,6 +256,34 @@ def _db_connect():
 
 
 # ── 자산 유형 레이블 변환 (schema.sql asset_type → UI 표시용) ──────────────────
+
+def _ensure_attack_chain_step_columns(cur) -> None:
+    """Keep existing databases compatible with detailed AI2 chain_steps."""
+    cur.execute("""
+        ALTER TABLE attack_chain_steps
+            ADD COLUMN IF NOT EXISTS path TEXT,
+            ADD COLUMN IF NOT EXISTS location TEXT,
+            ADD COLUMN IF NOT EXISTS violation_point TEXT,
+            ADD COLUMN IF NOT EXISTS transition_to_next TEXT,
+            ADD COLUMN IF NOT EXISTS related_invariants JSONB DEFAULT '[]'::jsonb,
+            ADD COLUMN IF NOT EXISTS evidence_ids JSONB DEFAULT '[]'::jsonb,
+            ADD COLUMN IF NOT EXISTS threatened_asset_ids JSONB DEFAULT '[]'::jsonb
+    """)
+
+
+def _json_array(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
 
 _ASSET_TYPE_LABEL = {
     "server":                "서버",
@@ -816,6 +844,7 @@ def _save_attack_chains_to_db(scan_id: str, scenarios: list) -> None:
     try:
         conn = _db_connect()
         cur  = conn.cursor()
+        _ensure_attack_chain_step_columns(cur)
         for s in scenarios:
             cid = s.get("chain_scenario_id", "")
             if not cid:
@@ -849,12 +878,49 @@ def _save_attack_chains_to_db(scan_id: str, scenarios: list) -> None:
 
             # attack_chain_steps (순서 보존)
             cur.execute("DELETE FROM attack_chain_steps WHERE chain_id = %s", (cid,))
-            for i, step_text in enumerate(s.get("attack_chain", []), 1):
+            chain_steps = s.get("chain_steps") or []
+            if not chain_steps:
+                chain_steps = [
+                    {"order": i, "violation_point": step_text}
+                    for i, step_text in enumerate(s.get("attack_chain", []), 1)
+                ]
+            for i, step in enumerate(chain_steps, 1):
+                order = step.get("order") or step.get("step_order") or i
+                step_text = (
+                    step.get("violation_point")
+                    or step.get("finding")
+                    or step.get("step")
+                    or step.get("summary")
+                    or step.get("description")
+                    or step.get("path")
+                    or ""
+                )
                 cur.execute("""
-                    INSERT INTO attack_chain_steps (chain_id, step_order, step_text)
-                    VALUES (%s, %s, %s) ON CONFLICT (chain_id, step_order) DO UPDATE
-                    SET step_text = EXCLUDED.step_text
-                """, (cid, i, step_text))
+                    INSERT INTO attack_chain_steps
+                        (chain_id, step_order, step_text, path, location, violation_point,
+                         transition_to_next, related_invariants, evidence_ids, threatened_asset_ids)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (chain_id, step_order) DO UPDATE SET
+                        step_text = EXCLUDED.step_text,
+                        path = EXCLUDED.path,
+                        location = EXCLUDED.location,
+                        violation_point = EXCLUDED.violation_point,
+                        transition_to_next = EXCLUDED.transition_to_next,
+                        related_invariants = EXCLUDED.related_invariants,
+                        evidence_ids = EXCLUDED.evidence_ids,
+                        threatened_asset_ids = EXCLUDED.threatened_asset_ids
+                """, (
+                    cid,
+                    order,
+                    step_text,
+                    step.get("path"),
+                    step.get("location"),
+                    step.get("violation_point") or step_text,
+                    step.get("transition_to_next") or step.get("chain_transition"),
+                    json.dumps(step.get("related_invariants") or [], ensure_ascii=False),
+                    json.dumps(step.get("evidence_ids") or step.get("evidence_refs") or step.get("matched_evidence_ids") or [], ensure_ascii=False),
+                    json.dumps(step.get("threatened_asset_ids") or step.get("affected_asset_ids") or step.get("asset_ids") or step.get("target_asset_ids") or [], ensure_ascii=False),
+                ))
 
             # attack_chain_invariants
             cur.execute("DELETE FROM attack_chain_invariants WHERE chain_id = %s", (cid,))
@@ -925,13 +991,13 @@ def _save_attack_chains_to_db(scan_id: str, scenarios: list) -> None:
 
 # ── PostgreSQL pentest_results 저장 (schema.sql GROUP 7) ─────────────────────
 
-def save_pentest_to_db(scan_id: str, result: dict) -> None:
+def save_pentest_to_db(scan_id: str, result: dict) -> bool:
     """
     pentest_results, pentest_related_invariants, pentest_target_assets 에 저장한다.
     schema.sql GROUP 7 기준.
     """
     if not HAS_PSYCOPG2:
-        return
+        return False
     try:
         conn = _db_connect()
         cur  = conn.cursor()
@@ -944,6 +1010,11 @@ def save_pentest_to_db(scan_id: str, result: dict) -> None:
                  impact_assessment, evidence_description, additional_notes)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (test_id) DO UPDATE SET
+                schema_version           = EXCLUDED.schema_version,
+                scan_id                  = EXCLUDED.scan_id,
+                scenario_id              = EXCLUDED.scenario_id,
+                tester                   = EXCLUDED.tester,
+                tested_at                = EXCLUDED.tested_at,
                 overall_verdict          = EXCLUDED.overall_verdict,
                 attack_input_and_process = EXCLUDED.attack_input_and_process,
                 observed_result          = EXCLUDED.observed_result,
@@ -975,15 +1046,57 @@ def save_pentest_to_db(scan_id: str, result: dict) -> None:
         # pentest_target_assets
         cur.execute("DELETE FROM pentest_target_assets WHERE test_id = %s",
                     (result.get("test_id", ""),))
-        for ta in result.get("target_assets", []):
+        target_assets = result.get("target_assets", [])
+        target_asset_ids = [ta.get("asset_id", "") for ta in target_assets if ta.get("asset_id")]
+        existing_asset_ids = set()
+        if target_asset_ids:
+            cur.execute("""
+                SELECT asset_id FROM assets WHERE asset_id = ANY(%s)
+            """, (target_asset_ids,))
+            existing_asset_ids = {row[0] for row in cur.fetchall()}
+        for ta in target_assets:
+            asset_id = ta.get("asset_id", "")
+            if not asset_id or asset_id not in existing_asset_ids:
+                continue
             cur.execute("""
                 INSERT INTO pentest_target_assets (test_id, asset_id, asset_type)
                 VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
-            """, (result.get("test_id", ""), ta.get("asset_id", ""), ta.get("asset_type", "")))
+            """, (result.get("test_id", ""), asset_id, ta.get("asset_type", "")))
         conn.commit()
         conn.close()
+        return True
     except Exception as e:
         log.warning("pentest_results DB 저장 실패: %s", e)
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+        return False
+
+
+def delete_pentest_from_db(scan_id: str, test_id: str) -> bool:
+    """pentest 결과와 연결 테이블 항목을 test_id 기준으로 삭제한다."""
+    if not HAS_PSYCOPG2:
+        return False
+    try:
+        conn = _db_connect()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM pentest_related_invariants WHERE test_id = %s", (test_id,))
+        cur.execute("DELETE FROM pentest_target_assets WHERE test_id = %s", (test_id,))
+        cur.execute("DELETE FROM pentest_results WHERE scan_id = %s AND test_id = %s", (scan_id, test_id))
+        deleted = cur.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        log.warning("pentest_results DB 삭제 실패: %s", e)
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+        return False
 
 
 # ── PostgreSQL 스캔 목록 조회 (schema.sql scans 테이블 기준) ─────────────────
@@ -1098,6 +1211,8 @@ def _fetch_db_attack_chains_for_scan(scan_id: str) -> list:
     try:
         conn = _db_connect()
         cur  = conn.cursor()
+        _ensure_attack_chain_step_columns(cur)
+        conn.commit()
         cur.execute("""
             SELECT chain_scenario_id, created_at, title, source_bundle_id, risk_level,
                    scenario_basis_status, scenario_basis_violation_reason, scenario_basis_summary,
@@ -1128,10 +1243,27 @@ def _fetch_db_attack_chains_for_scan(scan_id: str) -> list:
 
             # attack_chain steps
             cur.execute("""
-                SELECT step_text FROM attack_chain_steps
+                SELECT step_order, step_text, path, location, violation_point,
+                       transition_to_next, related_invariants, evidence_ids,
+                       threatened_asset_ids
+                FROM attack_chain_steps
                 WHERE chain_id = %s ORDER BY step_order
             """, (cid,))
-            chain["attack_chain"] = [r[0] for r in cur.fetchall()]
+            step_rows = cur.fetchall()
+            chain["attack_chain"] = [r[1] for r in step_rows]
+            chain["chain_steps"] = [
+                {
+                    "order": r[0],
+                    "path": r[2],
+                    "location": r[3],
+                    "violation_point": r[4] or r[1],
+                    "related_invariants": _json_array(r[6]),
+                    "evidence_ids": _json_array(r[7]),
+                    "transition_to_next": r[5],
+                    "threatened_asset_ids": _json_array(r[8]),
+                }
+                for r in step_rows
+            ]
 
             # related invariants
             cur.execute("""
@@ -1242,6 +1374,116 @@ def _fetch_db_pentest_results_for_scan(scan_id: str) -> list:
         return result
     except Exception as e:
         log.warning("DB pentest_results fetch 실패: %s", e)
+        return []
+
+
+def _fetch_db_asset_events(limit: int = 50) -> list:
+    """asset_events 테이블에서 자산 변경 이력을 조회한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT event_id, event_type, asset_id, asset_name,
+                   description, zone, occurred_at, severity
+            FROM asset_events
+            ORDER BY occurred_at DESC NULLS LAST
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        result = []
+        for row in rows:
+            item = dict(zip(cols, row))
+            if item.get("occurred_at"):
+                item["occurred_at"] = item["occurred_at"].isoformat()
+            result.append(item)
+        return result
+    except Exception as e:
+        log.warning("DB asset_events fetch 실패: %s", e)
+        return []
+
+
+def _fetch_db_asset_history_monthly() -> list:
+    """asset_history_monthly 테이블에서 월별 자산 추이 데이터를 조회한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT date_label, period_start, total, vulnerable,
+                   unregistered, new_assets, policy_violations
+            FROM asset_history_monthly
+            ORDER BY period_start
+        """)
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        result = []
+        for row in rows:
+            item = dict(zip(cols, row))
+            if item.get("period_start"):
+                v = item["period_start"]
+                item["period_start"] = v.isoformat() if hasattr(v, "isoformat") else str(v)
+            result.append(item)
+        return result
+    except Exception as e:
+        log.warning("DB asset_history_monthly fetch 실패: %s", e)
+        return []
+
+
+def _fetch_db_scan_coverage_metrics(scan_id: str) -> list:
+    """scan_coverage 테이블에서 AI Pack 분석 품질 지표(metric/value)를 조회한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT metric, value
+            FROM scan_coverage
+            WHERE scan_id = %s
+            ORDER BY metric
+        """, (scan_id,))
+        rows = cur.fetchall()
+        conn.close()
+        return [{"metric": row[0], "value": int(row[1]) if row[1] is not None else 0} for row in rows]
+    except Exception as e:
+        log.warning("DB scan_coverage fetch 실패: %s", e)
+        return []
+
+
+def _fetch_db_invariant_impact_for_scan(scan_id: str) -> list:
+    """invariant_impact 및 연결 테이블에서 스캔의 불변식 영향 데이터를 조회한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT ii.id, ii.invariant_id, ii.result_id, ii.scan_id,
+                   ii.status, ii.violation_reason, ii.severity, ii.summary,
+                   ii.affected_resource_ids, ii.affected_zones,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iie.evidence_id), NULL)  AS evidence_ids,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iira.asset_id), NULL)    AS affected_registry_asset_ids,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iis.service_id), NULL)   AS affected_services
+            FROM invariant_impact ii
+            LEFT JOIN invariant_impact_evidence        iie  ON ii.id = iie.impact_id
+            LEFT JOIN invariant_impact_registry_assets iira ON ii.id = iira.impact_id
+            LEFT JOIN invariant_impact_services        iis  ON ii.id = iis.impact_id
+            WHERE ii.scan_id = %s
+            GROUP BY ii.id
+            ORDER BY ii.id
+        """, (scan_id,))
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        return [dict(zip(cols, row)) for row in rows]
+    except Exception as e:
+        log.warning("DB invariant_impact fetch 실패: %s", e)
         return []
 
 

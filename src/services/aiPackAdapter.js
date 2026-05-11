@@ -23,6 +23,8 @@ const EMPTY_DETAIL = {
   adapterErrors: [],
 };
 
+import { normalizeInvariantSource } from "../utils/invariantSource";
+
 const SENSITIVE_KEY = /(token|secret|password|private[_-]?key|credential|authorization|cookie)/i;
 
 function arr(value) {
@@ -44,11 +46,27 @@ function compact(values) {
   return arr(values).filter((value) => value !== undefined && value !== null && value !== "");
 }
 
+function firstNonEmpty(...values) {
+  return values.find((value) => {
+    if (value === undefined || value === null || value === "") return false;
+    if (Array.isArray(value) && !value.length) return false;
+    return true;
+  });
+}
+
+function uniqList(...values) {
+  return [...new Set(values.flatMap((value) => arr(value)).filter(Boolean))];
+}
+
 function countUnique(values) {
   return new Set(compact(values)).size;
 }
 
 function firstCount(...values) {
+  return values.find((value) => typeof value === "number" && value > 0) ?? 0;
+}
+
+function firstPositive(...values) {
   return values.find((value) => typeof value === "number" && value > 0) ?? 0;
 }
 
@@ -82,6 +100,10 @@ export function adaptScanList(payload) {
       asset_count: first(scan.asset_count, metrics.asset_count, 0),
       service_count: first(scan.service_count, metrics.service_count, 0),
       total_violations: first(scan.total_violations, scan.violated_invariant_count, metrics.violated_invariant_count, 0),
+      with_violation_count: first(scan.with_violation_count, scan.assets_with_violation, metrics.with_violation_count, 0),
+      unregistered_count: first(scan.unregistered_count, metrics.unregistered_count, 0),
+      online_count: first(scan.online_count, metrics.online_count, 0),
+      offline_count: first(scan.offline_count, metrics.offline_count, 0),
       attack_chains_count: first(scan.attack_chains_count, scan.ai2_chain_scenario_count, metrics.ai2_chain_scenario_count, 0),
       source: scan.source ?? "ai_pack",
     };
@@ -118,21 +140,68 @@ function adaptEvidence(evidence) {
   };
 }
 
-function adaptViolation(violation, traceByInvariant) {
+function traceInvariantId(trace) {
+  return first(trace?.invariant_id, trace?.invariant?.invariant_id, trace?.rule_result?.invariant_id);
+}
+
+function adaptViolation(violation, context = {}) {
+  const { traceByInvariant = {}, impactByInvariant = {}, impactByResult = {}, remediationsByInvariant = {}, evidenceById = {} } = context;
   const invariantId = first(violation.invariant_id, violation.id);
+  const resultId = first(violation.result_id, violation.id);
+  const impact = obj(impactByResult[resultId] ?? impactByInvariant[invariantId]);
+  const remediationRows = arr(remediationsByInvariant[invariantId]);
+  const primaryRemediation = obj(remediationRows[0]);
+  const evidenceIds = uniqList(
+    violation.evidence_ids,
+    violation.evidence_refs,
+    violation.matched_evidence_ids,
+    impact.evidence_ids
+  );
+  const affectedRegistryAssets = uniqList(
+    violation.affected_registry_asset_ids,
+    impact.affected_registry_asset_ids
+  );
+  const affectedResourceIds = uniqList(
+    violation.affected_resource_ids,
+    impact.affected_resource_ids
+  );
+  const assetIds = uniqList(
+    violation.asset_ids,
+    violation.affected_asset_ids,
+    affectedRegistryAssets,
+    affectedResourceIds
+  );
+  const affectedServices = uniqList(violation.affected_services, impact.affected_services);
+  const affectedZones = uniqList(violation.affected_zones, impact.affected_zones);
+  const evidenceSummaries = evidenceIds
+    .map((evidenceId) => evidenceById[evidenceId])
+    .filter(Boolean);
+
   return {
     ...violation,
-    id: violation.id ?? violation.result_id ?? invariantId,
-    result_id: violation.result_id ?? violation.id,
+    id: violation.id ?? resultId ?? invariantId,
+    result_id: resultId,
     invariant_id: invariantId,
     status: violation.status ?? "violated",
-    severity: normalizeSeverity(violation.severity),
+    severity: normalizeSeverity(first(violation.severity, impact.severity)),
     confidence: typeof violation.confidence === "number" ? violation.confidence : null,
-    evidence_ids: arr(first(violation.evidence_ids, violation.evidence_refs, violation.matched_evidence_ids)),
-    asset_ids: arr(first(violation.asset_ids, violation.affected_registry_asset_ids, violation.affected_asset_ids)),
-    affected_registry_asset_ids: arr(violation.affected_registry_asset_ids),
-    affected_services: arr(violation.affected_services),
-    affected_zones: arr(violation.affected_zones),
+    evidence_ids: evidenceIds,
+    evidence_summaries: evidenceSummaries,
+    asset_ids: assetIds,
+    affected_registry_asset_ids: affectedRegistryAssets,
+    affected_resource_ids: affectedResourceIds,
+    affected_services: affectedServices,
+    affected_zones: affectedZones,
+    remediation: firstNonEmpty(
+      violation.remediation,
+      violation.recommended_action,
+      primaryRemediation.description,
+      primaryRemediation.recommended_action
+    ),
+    priority: firstNonEmpty(primaryRemediation.priority, violation.priority),
+    remediation_items: remediationRows,
+    impact_summary: firstNonEmpty(impact.summary, violation.summary),
+    invariant_impact: Object.keys(impact).length ? impact : null,
     ai1_trace: traceByInvariant[invariantId] ?? null,
   };
 }
@@ -146,7 +215,7 @@ function normalizeSeverity(value = "medium") {
 }
 
 function adaptChainReport(report) {
-  const rawSteps = arr(report.step_reports ?? report.steps);
+  const rawSteps = arr(report.chain_steps ?? report.step_reports ?? report.steps);
   const flowSteps = arr(report.mitre_attack_flow);
   const fallbackStepIds = rawSteps.length || flowSteps.length ? [] : arr(report.attack_chain);
   const stepSource = rawSteps.length
@@ -171,7 +240,7 @@ function adaptChainReport(report) {
     order: step.order ?? step.step_order ?? index + 1,
     location: first(step.location, step.title, step.category, step.vm, "Evidence correlation step"),
     path: first(step.path, step.endpoint, step.step_id),
-    finding: first(step.finding, step.step, step.summary, step.description),
+    finding: first(step.finding, step.violation_point, step.step, step.summary, step.description),
     chain_transition: first(step.chain_transition, step.transition_to_next, step.reason),
     related_invariants: arr(first(step.related_invariants, step.violation_ids, step.violated_invariants)),
     evidence_ids: arr(first(step.evidence_ids, step.evidence_refs, step.matched_evidence_ids)),
@@ -212,9 +281,9 @@ function mergeChainSources(primaryChains, secondaryChains) {
       ...chain,
       attack_chain: arr(chain.attack_chain).length ? chain.attack_chain : existing.attack_chain,
       mitre_attack_flow: arr(chain.mitre_attack_flow).length ? chain.mitre_attack_flow : existing.mitre_attack_flow,
-      step_reports: arr(chain.step_reports ?? chain.steps).length
-        ? first(chain.step_reports, chain.steps)
-        : first(existing.step_reports, existing.steps),
+      step_reports: arr(chain.chain_steps ?? chain.step_reports ?? chain.steps).length
+        ? first(chain.chain_steps, chain.step_reports, chain.steps)
+        : first(existing.chain_steps, existing.step_reports, existing.steps),
       related_invariants: arr(chain.related_invariants).length ? chain.related_invariants : existing.related_invariants,
     });
   });
@@ -223,22 +292,63 @@ function mergeChainSources(primaryChains, secondaryChains) {
 }
 
 function adaptMitreMap(payload) {
+  const normalizeTactic = (item) => {
+    const invariantRefs = arr(item.violated_invariants ?? item.invariants);
+    return {
+      ...item,
+      violated_invariants: invariantRefs.map(invariantRefId).filter(Boolean),
+      evidence_summaries: arr(item.evidence_summaries),
+      affected_asset_ids: arr(item.affected_asset_ids),
+      next_possible_invariants: arr(item.next_possible_invariants),
+      chain_candidate_ids: arr(item.chain_candidate_ids),
+    };
+  };
+
   if (Array.isArray(payload)) {
     return {
-      tactics: payload.map((item) => ({
-        ...item,
-        violated_invariants: arr(item.violated_invariants ?? item.invariants),
-        evidence_summaries: arr(item.evidence_summaries),
-        affected_asset_ids: arr(item.affected_asset_ids),
-        next_possible_invariants: arr(item.next_possible_invariants),
-        chain_candidate_ids: arr(item.chain_candidate_ids),
-      })),
+      tactics: payload.map(normalizeTactic),
     };
   }
   const map = obj(payload);
   const tactics = arr(map.tactics ?? map.active_tactics ?? map.items);
-  if (tactics.length) return { ...map, tactics };
-  return { ...map, tactics: Object.entries(map).filter(([, v]) => typeof v === "object").map(([id, value]) => ({ tactic_id: id, ...value })) };
+  if (tactics.length) return { ...map, tactics: tactics.map(normalizeTactic) };
+  return {
+    ...map,
+    tactics: Object.entries(map)
+      .filter(([, v]) => typeof v === "object")
+      .map(([id, value]) => normalizeTactic({ tactic_id: id, ...value })),
+  };
+}
+
+function invariantRefId(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  return first(value.invariant_id, value.id, value.result_id);
+}
+
+function enrichViolationsWithMitre(violations, mitreTacticMap) {
+  const byInvariant = {};
+  arr(mitreTacticMap?.tactics).forEach((tactic) => {
+    arr(tactic.violated_invariants ?? tactic.invariants).forEach((ref) => {
+      const invariantId = invariantRefId(ref);
+      if (!invariantId) return;
+      byInvariant[invariantId] = {
+        mitre_tactic: tactic.tactic_id,
+        mitre_tactic_name: tactic.tactic_name,
+      };
+    });
+  });
+
+  return violations.map((violation) => {
+    const invariantId = violation.invariant_id ?? violation.id;
+    const mitre = byInvariant[invariantId];
+    if (!mitre) return violation;
+    return {
+      ...violation,
+      mitre_tactic: violation.mitre_tactic || mitre.mitre_tactic,
+      mitre_tactic_name: violation.mitre_tactic_name || mitre.mitre_tactic_name,
+    };
+  });
 }
 
 function adaptPentest(result) {
@@ -288,7 +398,8 @@ function adaptInvariant(invariant) {
     id,
     invariant_id: id,
     title: rawTitle && rawTitle !== id ? rawTitle : (!descriptionIsId ? invariant.description : null),
-    source: first(invariant.source, invariant.invariant_source, "fixed"),
+    source: normalizeInvariantSource(first(invariant.source, invariant.invariant_source, "fixed")),
+    invariant_source: normalizeInvariantSource(first(invariant.invariant_source, invariant.source, "fixed")),
     state: first(invariant.state, invariant.active === false ? "disabled" : "active"),
     approval_status: first(invariant.approval_status, invariant.catalog_status, invariant.approval_state, "approved"),
     evaluation_status: first(invariant.evaluation_status, invariant.status),
@@ -302,17 +413,22 @@ function buildSummary(rawSummary, timeline, assets, services, violations, chains
     arr(invariants).length,
     countUnique(violations.map((violation) => violation.invariant_id ?? violation.id))
   );
+  const invariantTotal = firstCount(summary.invariant_total, latestMetrics.invariant_total, inferredInvariantTotal);
+  const violatedCount = first(summary.violated_invariant_count, summary.total_violations, latestMetrics.violated_invariant_count, violations.length, 0);
+  const inferredAppliedCount = Math.max(invariantTotal - violatedCount, 0);
   return {
     ...latestMetrics,
     ...summary,
     asset_count: first(summary.asset_count, scan.asset_count, latestMetrics.asset_count, assets.length, 0),
     service_count: first(summary.service_count, scan.service_count, latestMetrics.service_count, services.length, 0),
-    invariant_total: firstCount(summary.invariant_total, latestMetrics.invariant_total, inferredInvariantTotal),
-    violated_invariant_count: first(summary.violated_invariant_count, summary.total_violations, latestMetrics.violated_invariant_count, violations.length, 0),
-    applied_invariant_count: first(summary.applied_invariant_count, latestMetrics.applied_invariant_count, 0),
+    invariant_total: invariantTotal,
+    violated_invariant_count: violatedCount,
+    applied_invariant_count: firstPositive(summary.applied_invariant_count, latestMetrics.applied_invariant_count, inferredAppliedCount),
     ai2_chain_scenario_count: first(summary.ai2_chain_scenario_count, summary.attack_chains, latestMetrics.ai2_chain_scenario_count, chains.length, 0),
     changed_asset_count: first(summary.changed_asset_count, latestMetrics.changed_asset_count, 0),
     new_asset_count: first(summary.new_asset_count, latestMetrics.new_asset_count, 0),
+    new_violations_since_previous_run: first(summary.new_violations_since_previous_run, latestMetrics.new_violation_count, 0),
+    resolved_invariants_since_previous_run: first(summary.resolved_invariants_since_previous_run, latestMetrics.resolved_invariant_count, 0),
     missing_asset_observation_count: first(summary.missing_asset_observation_count, latestMetrics.missing_asset_observation_count, 0),
   };
 }
@@ -345,16 +461,53 @@ function buildTimeline(raw, summary, scanId, scannedAt) {
 export function adaptScanDetail(payload, context = {}) {
   const raw = obj(payload);
   const trace = arr(raw.ai1EvaluationTrace ?? raw.ai1_evaluation_trace);
-  const traceByInvariant = Object.fromEntries(trace.map((item) => [item.invariant_id, item]));
+  const traceByInvariant = Object.fromEntries(
+    trace
+      .map((item) => [traceInvariantId(item), item])
+      .filter(([invariantId]) => invariantId)
+  );
+  const invariantImpact = arr(raw.invariantImpact ?? raw.assetInvariantImpact ?? raw.asset_invariant_impact ?? raw.invariant_impact);
+  const impactByInvariant = Object.fromEntries(
+    invariantImpact
+      .map((item) => [item.invariant_id, item])
+      .filter(([invariantId]) => invariantId)
+  );
+  const impactByResult = Object.fromEntries(
+    invariantImpact
+      .map((item) => [item.result_id, item])
+      .filter(([resultId]) => resultId)
+  );
+  const remediations = arr(raw.remediations ?? raw.remediation);
+  const remediationsByInvariant = remediations.reduce((acc, item) => {
+    const invariantId = item?.invariant_id ?? item?.id;
+    if (!invariantId) return acc;
+    acc[invariantId] = [...(acc[invariantId] ?? []), item];
+    return acc;
+  }, {});
   const ai2Reports = arr(raw.ai2ChainReports?.reports ?? raw.ai2_chain_reports?.reports ?? raw.ai2ChainReports ?? raw.ai2_chain_reports);
   const dbChains = arr(raw.attackChains ?? raw.attack_chains);
   const chainSource = mergeChainSources(ai2Reports, dbChains);
   const chains = chainSource.map(adaptChainReport);
-  const violations = arr(raw.violations ?? raw.invariant_results).map((item) => adaptViolation(item, traceByInvariant));
+  const mitreTacticMap = adaptMitreMap(raw.mitreTacticMap ?? raw.mitre_tactic_map ?? raw.mitreMapping ?? raw.mitre_mapping);
+  const evidenceEvents = arr(raw.evidenceEvents ?? raw.evidence_events ?? raw.evidence).map(adaptEvidence);
+  const evidenceById = Object.fromEntries(
+    evidenceEvents
+      .map((item) => [item.evidence_id, item])
+      .filter(([evidenceId]) => evidenceId)
+  );
+  const violations = enrichViolationsWithMitre(
+    arr(raw.violations ?? raw.invariant_results).map((item) => adaptViolation(item, {
+      traceByInvariant,
+      impactByInvariant,
+      impactByResult,
+      remediationsByInvariant,
+      evidenceById,
+    })),
+    mitreTacticMap
+  );
   const invariants = arr(raw.invariants ?? raw.invariant_catalog).map(adaptInvariant);
   const assets = arr(raw.assets).map(adaptAsset);
   const services = arr(raw.services);
-  const evidenceEvents = arr(raw.evidenceEvents ?? raw.evidence_events ?? raw.evidence).map(adaptEvidence);
   const scan_id = first(raw.scan_id, raw.run_id, raw.id, context.scanId, context.scan?.scan_id);
   const scanned_at = first(raw.scanned_at, raw.created_at, raw.completed_at, context.scan?.scanned_at);
   const baseSummary = buildSummary(raw.summary, obj(raw.securityPostureTimeline ?? raw.security_posture_timeline), assets, services, violations, chains, invariants, context.scan);
@@ -372,14 +525,14 @@ export function adaptScanDetail(payload, context = {}) {
     services,
     assetChanges: arr(raw.assetChanges ?? raw.asset_changes),
     assetReviewQueue: arr(raw.assetReviewQueue ?? raw.asset_review_queue),
-    invariantImpact: arr(raw.invariantImpact ?? raw.assetInvariantImpact ?? raw.asset_invariant_impact ?? raw.invariant_impact),
+    invariantImpact,
     violations,
     invariantReadiness: arr(raw.invariantReadiness ?? raw.invariant_readiness),
     ai1EvaluationTrace: trace,
     ai1LlmReviews: arr(raw.ai1LlmReviews ?? raw.ai1_llm_reviews),
     attackChains: chains,
     ai2ChainReports: chains,
-    mitreTacticMap: adaptMitreMap(raw.mitreTacticMap ?? raw.mitre_tactic_map ?? raw.mitreMapping ?? raw.mitre_mapping),
+    mitreTacticMap,
     securityPostureTimeline: timeline,
     pentestResults: arr(raw.pentestResults ?? raw.pentest_results ?? raw.redteam_validation).map(adaptPentest),
     ai3ReportInput: obj(raw.ai3ReportInput ?? raw.ai3_report_input),

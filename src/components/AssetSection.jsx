@@ -1,17 +1,21 @@
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState } from "react";
 import { ChipList, EmptyRow, SectionTitle } from "./common";
 
 const PAGE_SIZE = 10;
+const LIST_PAGE_SIZE = 10;
+const MAX_PAGE_BUTTONS = 10;
 
-export default function AssetSection({ assets = [], assetChanges = [], assetReviewQueue = [], invariantImpact = [], evidenceEvents = [], assetHistory = [] }) {
+export default function AssetSection({ assets = [], assetChanges = [], assetReviewQueue = [], invariantImpact = [], evidenceEvents = [], assetHistory = [], assetEvents = [], assetHistoryMonthly = [] }) {
   return (
     <section>
       <SectionTitle title="자산 목록과 evidence 영향 " subtitle="스캔 상세 데이터에서 자산, Evidence, 불변식 영향 관계 추적" />
       <Summary assets={assets} assetChanges={assetChanges} assetReviewQueue={assetReviewQueue} />
       <Timeline assetHistory={assetHistory} />
+      <MonthlyTrendChart data={assetHistoryMonthly} />
       <AssetTable assets={assets} invariantImpact={invariantImpact} />
       <ChangeQueue assetChanges={assetChanges} assetReviewQueue={assetReviewQueue} />
+      <AssetEventTable assetEvents={assetEvents} />
       <EvidenceTable evidenceEvents={evidenceEvents} />
     </section>
   );
@@ -34,7 +38,6 @@ function Summary({ assets, assetChanges, assetReviewQueue }) {
 }
 
 function Timeline({ assetHistory }) {
-  const [selectedPoint, setSelectedPoint] = useState(assetHistory.at(-1) ?? null);
   if (!assetHistory.length) return null;
   return (
     <div style={styles.chartGrid}>
@@ -45,9 +48,10 @@ function Timeline({ assetHistory }) {
             <CartesianGrid stroke="#eef2f6" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Line dataKey="total" name="Assets" stroke="#2f6fed" strokeWidth={2} activeDot={{ onClick: (_, payload) => setSelectedPoint(payload?.payload) }} />
-            <Line dataKey="with_violation" name="Violated invariants" stroke="#d92d20" strokeWidth={2} activeDot={{ onClick: (_, payload) => setSelectedPoint(payload?.payload) }} />
+            <Tooltip labelFormatter={formatTooltipLabel} />
+            <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11 }} />
+            <Line dataKey="total" name="전체 자산" stroke="#2f6fed" strokeWidth={2} />
+            <Line dataKey="with_violation" name="위반 불변식" stroke="#d92d20" strokeWidth={2} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -58,33 +62,92 @@ function Timeline({ assetHistory }) {
             <CartesianGrid stroke="#eef2f6" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Bar dataKey="changed_assets" name="Changed assets" fill="#2f6fed" />
-            <Bar dataKey="new_violations" name="New violations" fill="#d92d20" />
-            <Bar dataKey="resolved" name="Resolved" fill="#12b76a" />
+            <Tooltip labelFormatter={formatTooltipLabel} />
+            <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="changed_assets" name="변경 자산" fill="#2f6fed" />
+            <Bar dataKey="new_violations" name="신규 위반" fill="#d92d20" />
+            <Bar dataKey="resolved" name="해결된 불변식" fill="#12b76a" />
           </BarChart>
         </ResponsiveContainer>
-        {selectedPoint && (
-          <div style={styles.drilldown}>
-            <strong>{selectedPoint.scan_id ?? selectedPoint.date}</strong>
-            <DetailChips label="Changed assets" values={selectedPoint.changed_asset_ids} />
-            <DetailChips label="Violated invariants" values={selectedPoint.violated_invariants} />
-            <DetailChips label="New violations" values={selectedPoint.new_violations_since_previous_run} />
-            <DetailChips label="Resolved invariants" values={selectedPoint.resolved_invariants_since_previous_run} />
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function DetailChips({ label, values = [] }) {
+function MonthlyTrendChart({ data }) {
+  if (!data.length) return null;
+  const chartData = data.map((row) => ({
+    month: row.date_label ?? row.period_start,
+    total: row.total ?? 0,
+    vulnerable: row.vulnerable ?? 0,
+    unregistered: row.unregistered ?? 0,
+  }));
   return (
-    <div style={styles.detailChips}>
-      <span>{label}</span>
-      <ChipList values={values} />
+    <div style={styles.card}>
+      <h3 style={styles.cardTitle}>월별 자산 추이</h3>
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={chartData}>
+          <CartesianGrid stroke="#eef2f6" />
+          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11 }} />
+          <Line dataKey="total" name="전체 자산" stroke="#2f6fed" strokeWidth={2} dot={{ r: 4 }} />
+          <Line dataKey="vulnerable" name="위반 자산" stroke="#d92d20" strokeWidth={2} dot={{ r: 4 }} />
+          <Line dataKey="unregistered" name="미등록 자산" stroke="#f79009" strokeWidth={2} dot={{ r: 4 }} />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
+}
+
+const EVENT_TYPE_STYLE = {
+  asset_updated:  { label: "자산 변경",    bg: "#FEF3C7", color: "#92400E" },
+  asset_created:  { label: "신규 등록",    bg: "#D1FAE5", color: "#065F46" },
+  asset_removed:  { label: "자산 삭제",    bg: "#FEE2E2", color: "#991B1B" },
+  service_added:  { label: "서비스 추가",  bg: "#EDE9FE", color: "#5B21B6" },
+  service_removed:{ label: "서비스 제거",  bg: "#FEE2E2", color: "#991B1B" },
+};
+
+function AssetEventTable({ assetEvents }) {
+  const [page, setPage] = useState(1);
+  const { pageItems, currentPage, totalPages } = paginate(assetEvents, page);
+  if (!assetEvents.length) return null;
+  return (
+    <div style={styles.card}>
+      <h3 style={styles.cardTitle}>자산 변경 이력</h3>
+      <TableMeta total={assetEvents.length} currentPage={currentPage} totalPages={totalPages} />
+      <table style={styles.table}>
+        <thead>
+          <tr>{["유형", "자산 ID", "Zone", "내용", "발생 시각", "심각도"].map((h) => <th key={h} style={styles.th}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {pageItems.map((ev) => {
+            const typeStyle = EVENT_TYPE_STYLE[ev.event_type] ?? { label: ev.event_type ?? "-", bg: "#F3F4F6", color: "#374151" };
+            return (
+              <tr key={ev.event_id}>
+                <td style={styles.td}>
+                  <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: typeStyle.bg, color: typeStyle.color }}>
+                    {typeStyle.label}
+                  </span>
+                </td>
+                <td style={styles.tdMono}>{ev.asset_id ?? ev.asset_name ?? "-"}</td>
+                <td style={styles.td}>{ev.zone ?? "-"}</td>
+                <td style={{ ...styles.td, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.description}>{ev.description ?? "-"}</td>
+                <td style={styles.td}>{formatDate(ev.occurred_at)}</td>
+                <td style={styles.td}>{ev.severity ?? "-"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <Pagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />
+    </div>
+  );
+}
+
+function formatTooltipLabel(label, payload = []) {
+  return payload[0]?.payload?.tooltip_label ?? label;
 }
 
 function AssetTable({ assets, invariantImpact }) {
@@ -126,16 +189,21 @@ function ChangeQueue({ assetChanges, assetReviewQueue }) {
 }
 
 function ListCard({ title, items, idKey, textKey }) {
+  const [page, setPage] = useState(1);
+  const { pageItems, currentPage, totalPages } = paginate(items, page, LIST_PAGE_SIZE);
+
   return (
     <div style={styles.card}>
       <h3 style={styles.cardTitle}>{title}</h3>
-      {items.length ? items.map((item) => (
+      <TableMeta total={items.length} currentPage={currentPage} totalPages={totalPages} />
+      {items.length ? pageItems.map((item) => (
         <div key={`${item[idKey]}-${item[textKey]}`} style={styles.listItem}>
           <strong>{item[idKey]}</strong>
           <span>{item[textKey]}</span>
           {item.evidence_ids?.length ? <ChipList values={item.evidence_ids} /> : null}
         </div>
       )) : <p style={styles.emptyText}>None</p>}
+      <Pagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
@@ -178,27 +246,37 @@ function TableMeta({ total, currentPage, totalPages }) {
 
 function Pagination({ page, totalPages, onPageChange }) {
   if (totalPages <= 1) return null;
+  const visiblePages = getVisiblePages(page, totalPages);
   return (
     <div style={styles.pagination}>
-      {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+      <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} style={pageButton(false, page <= 1)}>‹</button>
+      {visiblePages.map((pageNumber) => (
         <button
           key={pageNumber}
+          type="button"
           onClick={() => onPageChange(pageNumber)}
           style={pageButton(page === pageNumber)}
         >
           {pageNumber}
         </button>
       ))}
+      <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} style={pageButton(false, page >= totalPages)}>›</button>
     </div>
   );
 }
 
-function paginate(items, page) {
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+function getVisiblePages(page, totalPages) {
+  const blockStart = Math.floor((page - 1) / MAX_PAGE_BUTTONS) * MAX_PAGE_BUTTONS + 1;
+  const blockEnd = Math.min(blockStart + MAX_PAGE_BUTTONS - 1, totalPages);
+  return Array.from({ length: blockEnd - blockStart + 1 }, (_, index) => blockStart + index);
+}
+
+function paginate(items, page, pageSize = PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const currentPage = Math.min(Math.max(page, 1), totalPages);
-  const start = (currentPage - 1) * PAGE_SIZE;
+  const start = (currentPage - 1) * pageSize;
   return {
-    pageItems: items.slice(start, start + PAGE_SIZE),
+    pageItems: items.slice(start, start + pageSize),
     currentPage,
     totalPages,
   };
@@ -263,21 +341,19 @@ const styles = {
   tdMono: { padding: "9px 10px", borderBottom: "1px solid #eef2f6", color: "#344054", fontWeight: 400 },
   listItem: { borderTop: "1px solid #eef2f6", padding: "10px 0", display: "flex", flexDirection: "column", gap: 5, color: "#344054", fontSize: 13 },
   emptyText: { margin: 0, color: "#98a2b3", fontSize: 13 },
-  drilldown: { marginTop: 12, borderTop: "1px solid #eef2f6", paddingTop: 10, display: "grid", gap: 8, fontSize: 12 },
-  detailChips: { display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "start", color: "#667085" },
   pagination: { display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 14, flexWrap: "wrap" },
 };
 
-function pageButton(active) {
+function pageButton(active, disabled = false) {
   return {
     minWidth: 30,
     height: 30,
     border: `1px solid ${active ? "#185FA5" : "#e4e7ec"}`,
     borderRadius: 6,
-    background: active ? "#185FA5" : "#fff",
-    color: active ? "#fff" : "#667085",
+    background: active ? "#185FA5" : disabled ? "#F8FAFC" : "#fff",
+    color: active ? "#fff" : disabled ? "#C0C6D0" : "#667085",
     fontSize: 12,
     fontWeight: active ? 700 : 500,
-    cursor: "pointer",
+    cursor: disabled ? "not-allowed" : "pointer",
   };
 }

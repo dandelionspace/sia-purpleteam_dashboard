@@ -1,7 +1,7 @@
 import axios from "axios";
-import sampleHealth from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-health.json";
-import sampleScanDetail from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-scan-detail-ai-run-20260508-075702.json";
-import sampleScans from "../../purpleteam-gcp-sync-20260508T085304Z/api-samples/api-scans.json";
+import sampleHealth from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-health.json";
+import sampleScanDetail from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-scan-detail-ai-run-20260511-010650.json";
+import sampleScans from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-scans.json";
 import { adaptScanDetail, adaptScanList } from "./aiPackAdapter";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
@@ -13,7 +13,7 @@ export const USE_MOCK = !ACTIVE_API_BASE_URL;
 const mockScans = adaptScanList(sampleScans);
 const mockDetails = Object.fromEntries(mockScans.map((scan) => [
   scan.scan_id,
-  scan.scan_id === "ai-run-20260508-075702"
+  scan.scan_id === "ai-run-20260511-010650"
     ? sampleScanDetail
     : { ...sampleScanDetail, scan_id: scan.scan_id, scanned_at: scan.scanned_at, status: scan.status, summary: scan },
 ]));
@@ -68,8 +68,20 @@ export async function savePentestResult(scanId, result) {
     ...result,
     target_assets: normalizeTargetAssets(result.target_assets),
   };
-  if (USE_MOCK) return { status: "ok", result: payload };
+  if (USE_MOCK) return { status: "ok", db_saved: true, result: payload };
   const response = await api.post(`/scans/${scanId}/pentest`, payload);
+  if (response.data?.db_saved === false) {
+    throw new Error("Pentest result was not saved to DB.");
+  }
+  return response.data;
+}
+
+export async function deletePentestResult(scanId, testId) {
+  if (USE_MOCK) return { status: "ok", db_deleted: true, test_id: testId };
+  const response = await api.delete(`/scans/${scanId}/pentest/${encodeURIComponent(testId)}`);
+  if (response.data?.status !== "ok") {
+    throw new Error("Pentest result was not deleted.");
+  }
   return response.data;
 }
 
