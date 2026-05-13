@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Badge, ChipList, EmptyRow, SectionTitle } from "./common";
+import { Badge, EmptyRow, SectionTitle } from "./common";
 import { getInvariantSource, sourceMatches } from "../utils/invariantSource";
+import { formatServerZone, formatServerZones } from "../utils/zoneDisplay";
 
 const SEVERITY_CHART_COLOR = {
   Critical: "#E05252",
@@ -11,20 +12,25 @@ const SEVERITY_CHART_COLOR = {
 };
 const PAGE_SIZE = 10;
 const MAX_PAGE_BUTTONS = 10;
+const SEVERITY_SORT = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 
-export default function ViolationSection({ violations = [], invariants = [], activeFilter = "all" }) {
-  const [selected, setSelected] = useState(null);
+export default function ViolationSection({ violations = [], assets = [], invariants = [], activeFilter = "all", onOpenEvidence = null }) {
   const [page, setPage] = useState(1);
   const filtered = activeFilter === "all"
     ? violations
     : violations.filter((item) => sourceMatches(item.invariant_source ?? item.source, activeFilter));
   const sourceRateStats = calcSourceRateStats(violations, invariants);
   const severityDist = calcSeverityDist(filtered);
-  const zoneDist = calcZoneDist(filtered, invariants);
+  const zoneDist = calcZoneDist(filtered, assets);
   const invariantById = useMemo(() => buildInvariantMap(invariants), [invariants]);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const sorted = [...filtered].sort((a, b) => {
+    const severityDiff = (SEVERITY_SORT[a.severity] ?? 4) - (SEVERITY_SORT[b.severity] ?? 4);
+    if (severityDiff !== 0) return severityDiff;
+    return normalizeConfidence(b.confidence) - normalizeConfidence(a.confidence);
+  });
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const currentPage = Math.min(Math.max(page, 1), totalPages);
-  const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageItems = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
     <section>
@@ -73,24 +79,35 @@ export default function ViolationSection({ violations = [], invariants = [], act
       </div>
       <div style={styles.card}>
         <div style={styles.tableHeader}>
+          <h3 style={{ ...styles.chartTitle, margin: 0 }}>위반 목록</h3>
           <span style={styles.pageSummary}>
-            {filtered.length ? `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(currentPage * PAGE_SIZE, filtered.length)} / ${filtered.length}` : "0 / 0"}
+            {sorted.length ? `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(currentPage * PAGE_SIZE, sorted.length)} / ${sorted.length}` : "0 / 0"}
           </span>
         </div>
         <table style={styles.table}>
+          <colgroup>
+            <col style={styles.colId} />
+            <col style={styles.colContent} />
+            <col style={styles.colSeverity} />
+            <col style={styles.colReason} />
+            <col style={styles.colConfidence} />
+            <col style={styles.colZone} />
+            <col style={styles.colSource} />
+            <col style={styles.colEvidence} />
+            <col style={styles.colAction} />
+          </colgroup>
           <thead>
             <tr>
-              {["불변식 ID", "심각도", "위반 상세", "불변식 내용", "신뢰도", "연관 증거", "자산", ""].map((head) => (
-                <th key={head} style={styles.th}>{head}</th>
+              {["불변식 ID", "불변식 내용", "심각도", "위반 상세", "신뢰도", "서버 존", "구분", "Evidence 수"].map((head, i) => (
+                <th key={head} style={getViolationTableHeaderStyle(i)}>{head}</th>
               ))}
+              <th style={styles.thSm}></th>
             </tr>
           </thead>
           <tbody>
             {pageItems.map((item) => (
               <tr key={item.result_id ?? item.invariant_id} style={styles.row}>
-                <td style={styles.tdMono}>{item.invariant_id}</td>
-                <td style={styles.td}><Badge value={item.severity} /></td>
-                <td style={styles.td}>{formatViolationReason(item.violation_reason)}</td>
+                <td style={{ ...styles.td, ...styles.invariantIdCell }}>{item.invariant_id}</td>
                 <td style={{ ...styles.td, ...styles.invariantContentCell }}>
                   <span
                     style={styles.truncatedInvariantContent}
@@ -99,26 +116,31 @@ export default function ViolationSection({ violations = [], invariants = [], act
                     {displayInvariantContent(item, invariantById[item.invariant_id])}
                   </span>
                 </td>
-                <td style={styles.td}>{formatConfidence(item.confidence)}</td>
-                <td style={styles.td}><ChipList values={item.evidence_ids} /></td>
-                <td style={styles.td}><ChipList values={item.asset_ids ?? item.affected_registry_asset_ids} /></td>
+                <td style={{ ...styles.tdSm, ...styles.severityCell }}><Badge value={item.severity} /></td>
+                <td style={styles.tdSm}>{formatViolationReason(item.violation_reason)}</td>
+                <td style={styles.tdSm}>{formatConfidence(item.confidence)}</td>
+                <td style={styles.tdSm}>{getViolationZones(item, invariantById[item.invariant_id]?.server_zone || invariantById[item.invariant_id]?.default_zone || invariantById[item.invariant_id]?.zone).join(", ") || "-"}</td>
+                <td style={styles.tdSm}>{formatSourceLabel(item.invariant_source ?? item.source)}</td>
+                <td style={styles.tdSm}>
+                  <EvidenceCountCell
+                    count={toList(item.evidence_ids).length}
+                  />
+                </td>
                 <td style={{ ...styles.td, textAlign: "right" }}>
-                  <button style={styles.linkButton} onClick={() => setSelected(item)}>상세 →</button>
+                  <button style={styles.linkButton} onClick={() => onOpenEvidence && onOpenEvidence(item, invariantById[item.invariant_id])}>위반 분석 →</button>
                 </td>
               </tr>
             ))}
-            {!filtered.length && <EmptyRow colSpan={8} text="불변식 위반 항목이 없습니다" />}
+            {sorted.length > 0 && Array.from({ length: PAGE_SIZE - pageItems.length }, (_, i) => (
+              <tr key={`ghost-${i}`} aria-hidden="true">
+                <td colSpan={9} style={{ ...styles.td, color: "transparent", userSelect: "none", pointerEvents: "none" }}>&nbsp;</td>
+              </tr>
+            ))}
+            {!sorted.length && <EmptyRow colSpan={9} text="불변식 위반 항목이 없습니다" />}
           </tbody>
         </table>
         <Pagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />
       </div>
-      {selected && (
-        <OrganizedViolationDrawer
-          violation={selected}
-          invariant={invariantById[selected.invariant_id]}
-          onClose={() => setSelected(null)}
-        />
-      )}
     </section>
   );
 }
@@ -150,104 +172,12 @@ function getVisiblePages(page, totalPages) {
   return Array.from({ length: blockEnd - blockStart + 1 }, (_, index) => blockStart + index);
 }
 
-function OrganizedViolationDrawer({ violation, invariant, onClose }) {
-  const trace = violation.ai1_trace ?? {};
-  const evidenceIds = toList(violation.evidence_ids);
-  const assetIds = toList(violation.affected_registry_asset_ids ?? violation.asset_ids);
-  const resourceIds = toList(violation.affected_resource_ids);
-  const affectedServices = toList(violation.affected_services);
-  const affectedZones = getViolationZones(violation, invariant?.server_zone ?? invariant?.default_zone ?? invariant?.zone);
-  const serverZoneText = affectedZones.length ? affectedZones.join(", ") : "-";
-  const requiredEvidenceTypes = getTraceRequiredEvidenceTypes(trace);
-  const matchedEvidenceIds = getTraceMatchedEvidenceIds(trace);
-  const fieldsChecked = getTraceFieldsChecked(trace);
-  const missingFields = getTraceMissingFields(trace);
-  const decisionBasis = getTraceDecisionBasis(trace);
-  const evidenceSummaries = toList(violation.evidence_summaries ?? trace.evidence_summaries);
-
-  return (
-    <div style={styles.overlay} onClick={onClose}>
-      <aside style={styles.drawer} onClick={(event) => event.stopPropagation()}>
-        <div style={styles.drawerHeader}>
-          <div>
-            <p style={styles.drawerEyebrow}>불변식 위반 상세</p>
-            <h2 style={styles.drawerTitle}>{violation.invariant_id}</h2>
-            <p style={styles.drawerSubtitle}>{violation.description ?? "불변식 설명이 없습니다."}</p>
-          </div>
-          <button onClick={onClose} style={styles.closeButton} aria-label="닫기">×</button>
-        </div>
-
-        <div style={styles.drawerBadges}>
-          <StatusPill status={violation.status} />
-          <ReasonPill reason={violation.violation_reason} />
-          <Badge value={violation.severity} />
-          <ConfidencePill value={violation.confidence} />
-        </div>
-
-        <div style={styles.summaryPanel}>
-          <p style={styles.panelLabel}>판단 요약</p>
-          <p style={styles.summaryText}>{violation.summary ?? violation.reason ?? "No summary provided."}</p>
-          <div style={styles.metricGrid}>
-            <Metric label="서버 존" value={serverZoneText} />
-            <Metric label="우선순위" value={violation.priority ?? "-"} />
-          </div>
-        </div>
-
-        <DrawerSection title="기본 정보">
-          <InfoBlock title="Result ID" value={violation.result_id} />
-          <InfoBlock title="탐지 시각" value={formatDateTime(violation.detected_at ?? violation.created_at)} />
-          <InfoBlock title="소스" value={formatSourceLabel(violation.invariant_source ?? violation.source)} />
-          <InfoBlock title="공격 단계" value={violation.attack_phase} />
-        </DrawerSection>
-
-        <DrawerSection title="판단 근거">
-          <InfoBlock title="위반 유형" value={formatViolationReason(violation.violation_reason)} />
-          <InfoBlock title="판단 사유" value={violation.reason} />
-          <InfoBlock title="불변식 내용" value={violation.description} />
-        </DrawerSection>
-
-        <DrawerSection title="영향 범위">
-          <InfoBlock title="영향 자산" value={<ChipGroup values={assetIds} />} />
-          <InfoBlock title="영향 리소스" value={<ChipGroup values={resourceIds} />} />
-          <InfoBlock title="영향 서비스" value={<ChipGroup values={affectedServices} />} />
-          <InfoBlock title="영향 존" value={<ChipGroup values={affectedZones} />} />
-        </DrawerSection>
-
-        <DrawerSection title="증거">
-          <InfoBlock title="Evidence IDs" value={<ChipGroup values={evidenceIds} tone="blue" />} />
-          <InfoBlock title="Evidence summaries" value={<EvidenceSummaryList values={evidenceSummaries} />} />
-        </DrawerSection>
-
-        <DrawerSection title="AI1 Trace">
-          <InfoBlock title="Required evidence types" value={<ChipGroup values={requiredEvidenceTypes} tone="blue" />} />
-          <InfoBlock title="Matched evidence IDs" value={<ChipGroup values={matchedEvidenceIds} tone="blue" />} />
-          <InfoBlock title="Fields checked" value={<ChipGroup values={fieldsChecked} />} />
-          <InfoBlock title="Decision basis" value={decisionBasis} />
-          <InfoBlock title="Missing fields" value={missingFields.length ? <ChipGroup values={missingFields} tone="warn" /> : "None"} />
-        </DrawerSection>
-
-        <DrawerSection title="검증 가능성">
-          <InfoBlock title="현재 환경 검증 가능 여부" value={formatTestable(violation.current_environment_testable)} />
-          <InfoBlock title="검증 가능성 사유" value={violation.testability_reason} />
-        </DrawerSection>
-
-        {(violation.remediation || violation.priority) && (
-          <div style={styles.remediationPanel}>
-            <p style={styles.panelLabel}>권고 조치 {violation.priority ? `(${violation.priority})` : ""}</p>
-            <p style={styles.summaryText}>{violation.remediation ?? "-"}</p>
-          </div>
-        )}
-      </aside>
-    </div>
-  );
-}
-
 function ViolationDrawer({ violation, onClose }) {
   const trace = violation.ai1_trace ?? {};
   const evidenceIds = toList(violation.evidence_ids);
   const assetIds = toList(violation.affected_registry_asset_ids ?? violation.asset_ids);
   const affectedServices = toList(violation.affected_services);
-  const affectedZones = toList(violation.affected_zones);
+  const affectedZones = formatServerZones(violation.affected_zones);
   const requiredEvidenceTypes = toList(trace.required_evidence_types);
   const matchedEvidenceIds = toList(trace.matched_evidence_ids);
   const fieldsChecked = toList(trace.fields_checked);
@@ -276,7 +206,7 @@ function ViolationDrawer({ violation, onClose }) {
           <p style={styles.summaryText}>{violation.summary ?? violation.reason ?? "No summary provided."}</p>
           <div style={styles.metricGrid}>
             <Metric label="신뢰도" value={formatConfidence(violation.confidence)} />
-            <Metric label="서버 존" value={violation.server_zone ?? violation.zone ?? "-"} />
+            <Metric label="서버 존" value={formatServerZone(violation.server_zone ?? violation.zone) || "-"} />
           </div>
         </div>
 
@@ -319,6 +249,16 @@ function ViolationDrawer({ violation, onClose }) {
 }
 
 void ViolationDrawer;
+
+function EvidenceCountCell({ count, onOpen }) {
+  if (!count) return <span style={{ color: "#b0aea8", fontSize: 11 }}>-</span>;
+  if (!onOpen) return <span style={{ fontSize: 12, color: "#374151" }}>{count}건</span>;
+  return (
+    <button style={styles.evidenceCountButton} onClick={onOpen}>
+      {count}건
+    </button>
+  );
+}
 
 function ViolationRateBar({ label, violated, total }) {
   const pct = total === 0 ? 0 : Math.round((violated / total) * 100);
@@ -431,7 +371,7 @@ function EvidenceSummaryList({ values }) {
             {[
               item.evidence_type ?? item.event_type,
               item.producer?.vm ?? item.producer_vm,
-              item.producer?.zone ?? item.producer_zone,
+              formatServerZone(item.producer?.zone ?? item.producer_zone),
               formatDateTime(item.collected_at ?? item.timestamp),
             ].filter(Boolean).join(" · ")}
           </p>
@@ -443,29 +383,16 @@ function EvidenceSummaryList({ values }) {
   );
 }
 
-function getTraceRequiredEvidenceTypes(trace) {
-  return toList(trace.required_evidence_types ?? trace.invariant?.required_evidence ?? trace.required_evidence);
-}
-
-function getTraceMatchedEvidenceIds(trace) {
-  return toList(trace.matched_evidence_ids ?? trace.evidence_refs ?? trace.rule_result?.evidence_ids);
-}
-
-function getTraceFieldsChecked(trace) {
-  return toList(trace.fields_checked ?? trace.invariant?.fields_checked ?? trace.rule_result?.fields_checked);
-}
-
-function getTraceMissingFields(trace) {
-  return toList(trace.missing_fields ?? trace.rule_result?.missing_fields);
-}
-
-function getTraceDecisionBasis(trace) {
-  return trace.decision_basis ?? trace.rule_result?.reason ?? trace.invariant?.verification_logic ?? trace.instructions;
-}
-
 function formatConfidence(value) {
   if (typeof value !== "number") return "-";
   return `${Math.round(value * 100)}%`;
+}
+
+function normalizeConfidence(value) {
+  if (typeof value === "number") return value > 1 ? value / 100 : value;
+  const parsed = Number.parseFloat(value);
+  if (Number.isNaN(parsed)) return 0;
+  return parsed > 1 ? parsed / 100 : parsed;
 }
 
 function formatDateTime(value) {
@@ -571,31 +498,115 @@ function calcSeverityDist(list) {
     .map(([name, value]) => ({ name, value, color: SEVERITY_CHART_COLOR[name] }));
 }
 
-function calcZoneDist(list, invariants = []) {
-  const counts = {};
-  const serverZoneByInvariant = buildInvariantServerZoneMap(invariants);
-  list.forEach((item) => {
-    const invariantId = item.invariant_id ?? item.id;
-    const zones = getViolationZones(item, serverZoneByInvariant[invariantId]);
+function calcZoneDist(list, assets = []) {
+  const zoneViolationKeys = {};
+  const assetById = buildAssetMap(assets);
+  list.forEach((item, index) => {
+    const violationKey = getViolationCountKey(item, index);
+    const zones = getViolationAssetZones(item, assetById);
     zones.forEach((zone) => {
-      counts[zone] = (counts[zone] ?? 0) + 1;
+      if (!zoneViolationKeys[zone]) zoneViolationKeys[zone] = new Set();
+      zoneViolationKeys[zone].add(violationKey);
     });
   });
-  return Object.entries(counts)
-    .map(([zone, count]) => ({ zone, count }))
+  return Object.entries(zoneViolationKeys)
+    .map(([zone, violationKeys]) => ({ zone, count: violationKeys.size }))
     .sort((a, b) => b.count - a.count);
 }
 
-function getViolationZones(violation, invariantZone) {
-  const zones = toList(violation.affected_zones)
-    .map(normalizeServerZone)
+function getViolationCountKey(violation, index) {
+  const explicitId = violation.result_id ?? violation.violation_id ?? violation.id;
+  if (explicitId) return explicitId;
+  const assetIds = getViolationAssetIds(violation).join("|");
+  const evidenceIds = toList(violation.evidence_ids).join("|");
+  return [
+    violation.invariant_id,
+    assetIds,
+    evidenceIds,
+    violation.violation_reason ?? violation.reason,
+    index,
+  ].filter(Boolean).join("::");
+}
+
+function getViolationAssetZones(violation, assetById) {
+  const relatedAssetIds = getViolationAssetIds(violation);
+  const zonesFromAssets = relatedAssetIds
+    .flatMap((assetId) => getAssetZoneCandidates(assetById[assetId]))
+    .map(formatServerZone)
     .filter(Boolean);
+  if (zonesFromAssets.length) return [...new Set(zonesFromAssets)];
+
+  const inlineAssetZones = getInlineAffectedAssets(violation)
+    .flatMap(getAssetZoneCandidates)
+    .map(formatServerZone)
+    .filter(Boolean);
+  if (inlineAssetZones.length) return [...new Set(inlineAssetZones)];
+
+  return formatServerZones(violation.affected_zones);
+}
+
+function getViolationAssetIds(violation) {
+  return uniqueList(
+    violation.affected_registry_asset_ids,
+    violation.asset_ids,
+    violation.affected_asset_ids,
+    violation.invariant_impact?.affected_registry_asset_ids,
+    violation.invariant_impact?.asset_ids,
+    getInlineAffectedAssets(violation).map((asset) => getAssetId(asset))
+  );
+}
+
+function getInlineAffectedAssets(violation) {
+  return [
+    ...toList(violation.affected_assets),
+    ...toList(violation.assets),
+    ...toList(violation.invariant_impact?.affected_assets),
+  ].filter((asset) => asset && typeof asset === "object");
+}
+
+function buildAssetMap(assets) {
+  const pairs = [];
+  toList(assets).forEach((asset) => {
+    const ids = uniqueList(
+      asset.asset_id,
+      asset.id,
+      asset.name,
+      asset.asset_name,
+      asset.vm,
+      asset.hostname,
+      asset.resource_id
+    );
+    ids.forEach((id) => pairs.push([id, asset]));
+  });
+  return Object.fromEntries(pairs);
+}
+
+function getAssetId(asset) {
+  if (!asset || typeof asset !== "object") return asset;
+  return asset.asset_id ?? asset.id ?? asset.name ?? asset.asset_name ?? asset.vm ?? asset.hostname ?? asset.resource_id;
+}
+
+function getAssetZoneCandidates(asset) {
+  if (!asset || typeof asset !== "object") return [];
+  return [
+    asset.zone,
+    asset.server_zone,
+    asset.default_zone,
+    asset.producer_zone,
+    asset.primary_zone,
+    asset.network_zone,
+  ];
+}
+
+function getViolationZones(violation, invariantZone) {
+  const zones = formatServerZones(violation.affected_zones);
   if (zones.length) return [...new Set(zones)];
 
-  const fallback = normalizeServerZone(
-    violation.server_zone ?? violation.zone ?? violation.default_zone ?? invariantZone
+  // ?? 대신 || 사용: 빈 문자열 ""도 falsy로 처리해 다음 fallback으로 넘어가야 함
+  const fallback = formatServerZone(
+    violation.server_zone || violation.zone || violation.default_zone || invariantZone
   );
-  return [fallback || "unknown"];
+  return fallback ? [fallback] : [];
 }
 
 function buildInvariantServerZoneMap(invariants) {
@@ -603,51 +614,14 @@ function buildInvariantServerZoneMap(invariants) {
     invariants
       .map((invariant) => [
         invariant.invariant_id ?? invariant.id,
-        invariant.server_zone ?? invariant.default_zone ?? invariant.zone,
+        invariant.server_zone || invariant.default_zone || invariant.zone,
       ])
       .filter(([invariantId, zone]) => invariantId && zone)
   );
 }
 
-function normalizeServerZone(zone) {
-  const key = String(zone ?? "").trim();
-  if (!key) return "";
-  const lower = key.toLowerCase();
-  const normalized = lower.replace(/^zone-/, "");
-  const compact = normalized.replace(/[\s_-]/g, "");
-  const labels = {
-    mgmt: "argos-mgmt",
-    management: "argos-mgmt",
-    "\uAD00\uB9AC": "argos-mgmt",
-    "\uAD00\uB9AC\uB9DD": "argos-mgmt",
-    dmz: "argos-dmz",
-    iot: "argos-iot",
-    ops: "argos-ops",
-    operation: "argos-ops",
-    operations: "argos-ops",
-    "\uC6B4\uC601": "argos-ops",
-    "\uC6B4\uC601\uB9DD": "argos-ops",
-    data: "argos-data",
-    db: "argos-data",
-    database: "argos-data",
-    dbzone: "argos-data",
-    "\uB370\uC774\uD130": "argos-data",
-    "\uB370\uC774\uD130\uB9DD": "argos-data",
-    deploy: "argos-deploy",
-    deployment: "argos-deploy",
-    "\uBC30\uD3EC": "argos-deploy",
-    "\uBC30\uD3EC\uB9DD": "argos-deploy",
-    signing: "argos-signing",
-    sign: "argos-signing",
-    "\uC11C\uBA85": "argos-signing",
-    "\uC11C\uBA85\uB9DD": "argos-signing",
-    security: "argos-security",
-    sec: "argos-security",
-    "\uBCF4\uC548": "argos-security",
-    "\uBCF4\uC548\uB9DD": "argos-security",
-  };
-  if (lower.startsWith("argos-")) return lower;
-  return labels[lower] ?? labels[normalized] ?? labels[compact] ?? key;
+function uniqueList(...values) {
+  return [...new Set(values.flatMap((value) => toList(value)).filter(Boolean))];
 }
 
 function pageButton(active, disabled = false) {
@@ -664,6 +638,11 @@ function pageButton(active, disabled = false) {
   };
 }
 
+function getViolationTableHeaderStyle(index) {
+  if (index === 0 || index === 1) return styles.th;
+  return styles.thSm;
+}
+
 const styles = {
   rateCard: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 16, minHeight: 276 },
   rateItem: { marginBottom: 14 },
@@ -678,16 +657,30 @@ const styles = {
   legendSwatch: { width: 10, height: 10, borderRadius: 2, display: "inline-block" },
   emptyChartText: { fontSize: 12, color: "#98a2b3" },
   card: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, overflow: "hidden", marginBottom: 22, padding: "10px 18px 16px" },
-  tableHeader: { display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 8 },
+  tableHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 12 },
   pageSummary: { fontSize: 11, color: "#667085", whiteSpace: "nowrap" },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
+  table: { width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: 12 },
+  colId: { width: 135 },
+  colContent: { width: "auto" },
+  colSeverity: { width: 115 },
+  colReason: { width: 160 },
+  colConfidence: { width: 105 },
+  colZone: { width: 220 },
+  colSource: { width: 180 },
+  colEvidence: { width: 90 },
+  colAction: { width: 72 },
   th: { textAlign: "left", padding: "9px 10px", color: "#73726c", borderBottom: "0.5px solid rgba(0,0,0,0.1)", fontWeight: 500 },
-  td: { padding: "9px 10px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", color: "#1a1a18", verticalAlign: "top" },
+  thSm: { textAlign: "left", padding: "9px 10px", color: "#73726c", borderBottom: "0.5px solid rgba(0,0,0,0.1)", fontWeight: 500 },
+  td: { padding: "11px 10px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", color: "#1a1a18", verticalAlign: "middle" },
+  tdSm: { padding: "11px 10px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", color: "#1a1a18", verticalAlign: "middle" },
   tdMono: { padding: "9px 10px", borderBottom: "0.5px solid rgba(0,0,0,0.08)", color: "#111827", fontFamily: "monospace", fontWeight: 500 },
-  invariantContentCell: { width: 280, maxWidth: 280 },
-  truncatedInvariantContent: { display: "block", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  invariantIdCell: { color: "#111827", fontFamily: "monospace", fontWeight: 500, paddingRight: 24 },
+  invariantContentCell: { minWidth: 0, paddingLeft: 24, paddingRight: 24 },
+  severityCell: { paddingLeft: 24 },
+  truncatedInvariantContent: { display: "block", width: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   row: { background: "#fff" },
   linkButton: { border: "none", background: "transparent", color: "#185FA5", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0 },
+  evidenceCountButton: { border: "0.5px solid #c8ddf0", borderRadius: 6, background: "#EEF4FD", color: "#185FA5", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: "3px 8px" },
   pagination: { display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 14, flexWrap: "wrap" },
   overlay: { position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.15)", display: "flex", justifyContent: "flex-end" },
   drawer: { width: 560, maxWidth: "100vw", background: "#fff", height: "100%", overflowY: "auto", padding: "0 0 24px", boxShadow: "-4px 0 24px rgba(0,0,0,0.08)" },

@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import AssetSection from "../components/AssetSection";
 import AttackSection from "../components/AttackSection";
 import DefenseSection from "../components/DefenseSection";
+import EvidenceSection from "../components/EvidenceSection";
 import InvariantSection from "../components/InvariantSection";
+import ViolationAnalysisPage from "./ViolationAnalysisPage";
 import KpiCards from "../components/KpiCards";
 import PentestSection from "../components/PentestSection";
 import ScanSection from "../components/ScanSection";
@@ -12,6 +14,7 @@ import { ACTIVE_API_BASE_URL, AI_PACK_API_BASE_URL, fetchHealth, fetchScanDetail
 import { sourceMatches } from "../utils/invariantSource";
 
 const NAV_ITEMS = [
+  { id: "evidence", icon: "EV", label: "Evidence", sections: ["evidence"] },
   { id: "overview", icon: "⚠️", label: "불변식 위반 현황", sections: ["kpi", "violation", "attack"] },
   { id: "assets", icon: "🧾", label: "자산 관리", sections: ["asset"] },
   { id: "invariants", icon: "📝", label: "불변식 상세", sections: ["invariant"] },
@@ -30,6 +33,7 @@ export default function Dashboard() {
   const [activeNav, setActiveNav] = useState("overview");
   const [activeFilter, setActiveFilter] = useState("all");
   const [selectedScanId, setSelectedScanId] = useState(null);
+  const [evidenceTarget, setEvidenceTarget] = useState(null); // { violation, invariant }
 
   const current = NAV_ITEMS.find((item) => item.id === activeNav) ?? NAV_ITEMS[0];
 
@@ -38,7 +42,8 @@ export default function Dashboard() {
   const scanList = useMemo(() => scanListQuery.data ?? [], [scanListQuery.data]);
   const latestScanId = useMemo(() => {
     if (!scanList.length) return null;
-    return [...scanList].sort((a, b) => new Date(b.scanned_at ?? 0) - new Date(a.scanned_at ?? 0))[0]?.scan_id ?? null;
+    const sorted = [...scanList].sort((a, b) => new Date(b.scanned_at ?? 0) - new Date(a.scanned_at ?? 0));
+    return sorted[0]?.scan_id ?? null;
   }, [scanList]);
   const effectiveScanId = selectedScanId ?? latestScanId;
   const selectedScan = scanList.find((scan) => scan.scan_id === effectiveScanId);
@@ -114,6 +119,7 @@ export default function Dashboard() {
               onClick={() => {
                 setActiveNav(item.id);
                 setActiveFilter("all");
+                setEvidenceTarget(null);
               }}
               style={navButton(activeNav === item.id)}
             >
@@ -159,7 +165,7 @@ export default function Dashboard() {
 
             {!current.sections.includes("scan") && (
               <>
-                {activeNav === "overview" && (
+                {activeNav === "overview" && !evidenceTarget && (
                   <div style={styles.filterRow}>
                     {FILTER_TABS.map((tab) => {
                       const invariants = detail?.invariants ?? [];
@@ -176,28 +182,65 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {current.sections.includes("kpi") && (
+                {current.sections.includes("kpi") && !evidenceTarget && (
                   <KpiCards summary={summary} violations={violations} invariants={detail?.invariants ?? []} activeFilter={activeFilter} attackChains={attackChains} />
                 )}
 
-                {current.sections.includes("violation") && (
-                  <ViolationSection violations={violations} assets={detail?.assets ?? []} invariants={detail?.invariants ?? []} activeFilter={activeFilter} />
+                {current.sections.includes("violation") && !evidenceTarget && (
+                  <ViolationSection
+                    violations={violations}
+                    assets={detail?.assets ?? []}
+                    invariants={detail?.invariants ?? []}
+                    activeFilter={activeFilter}
+                    onOpenEvidence={(violation, invariant) => setEvidenceTarget({ violation, invariant })}
+                  />
                 )}
 
-                {current.sections.includes("attack") && (
-                  <AttackSection attackChains={attackChains} mitreTacticMap={detail?.mitreTacticMap} violations={violations} activeFilter={activeFilter} />
+                {current.sections.includes("violation") && evidenceTarget && (
+                  <ViolationAnalysisPage
+                    violation={evidenceTarget.violation}
+                    invariant={evidenceTarget.invariant}
+                    evidenceEvents={detail?.evidenceEvents ?? []}
+                    violations={violations}
+                    invariants={detail?.invariants ?? []}
+                    onBack={() => setEvidenceTarget(null)}
+                  />
+                )}
+
+                {current.sections.includes("attack") && !evidenceTarget && (
+                  <AttackSection
+                    attackChains={attackChains}
+                    diagnosticRedteamCandidates={detail?.diagnosticRedteamCandidates ?? []}
+                    mitreTacticMap={detail?.mitreTacticMap}
+                    diagnosticMitreTacticMap={detail?.diagnosticMitreTacticMap}
+                    violations={violations}
+                    activeFilter={activeFilter}
+                  />
+                )}
+
+                {current.sections.includes("evidence") && (
+                  <EvidenceSection
+                    evidenceEvents={detail?.evidenceEvents ?? []}
+                    violations={violations}
+                    invariants={detail?.invariants ?? []}
+                  />
                 )}
 
                 {current.sections.includes("asset") && (
                   <AssetSection
                     assets={detail?.assets ?? []}
+                    services={detail?.services ?? []}
+                    summary={summary}
                     assetChanges={detail?.assetChanges ?? []}
                     assetReviewQueue={detail?.assetReviewQueue ?? []}
                     invariantImpact={detail?.invariantImpact ?? []}
+                    violations={violations}
                     evidenceEvents={detail?.evidenceEvents ?? []}
                     assetHistory={assetHistory}
                     assetEvents={detail?.assetEvents ?? []}
                     assetHistoryMonthly={detail?.assetHistoryMonthly ?? []}
+                    assetScanTrend={detail?.assetScanTrend ?? []}
+                    securityPostureTimeline={securityTimeline}
                     activeScanId={effectiveScanId}
                   />
                 )}

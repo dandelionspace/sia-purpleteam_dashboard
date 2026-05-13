@@ -5,6 +5,7 @@ const EMPTY_DETAIL = {
   summary: {},
   assets: [],
   assetChanges: [],
+  assetScanTrend: [],
   assetReviewQueue: [],
   invariantImpact: [],
   violations: [],
@@ -12,8 +13,13 @@ const EMPTY_DETAIL = {
   ai1EvaluationTrace: [],
   ai1LlmReviews: [],
   attackChains: [],
+  preventiveRiskChains: [],
+  ai2ObservedChains: [],
+  ai2ChainPayload: {},
+  diagnosticRedteamCandidates: [],
   ai2ChainReports: [],
   mitreTacticMap: {},
+  diagnosticMitreTacticMap: {},
   securityPostureTimeline: { points: [] },
   pentestResults: [],
   ai3ReportInput: {},
@@ -24,6 +30,7 @@ const EMPTY_DETAIL = {
 };
 
 import { normalizeInvariantSource } from "../utils/invariantSource";
+import { buildInvariantJudgmentCounts } from "../utils/invariantJudgment";
 
 const SENSITIVE_KEY = /(token|secret|password|private[_-]?key|credential|authorization|cookie)/i;
 
@@ -159,10 +166,12 @@ function adaptViolation(violation, context = {}) {
   );
   const affectedRegistryAssets = uniqList(
     violation.affected_registry_asset_ids,
+    violation.affected_assets,            // AI Pack raw field
     impact.affected_registry_asset_ids
   );
   const affectedResourceIds = uniqList(
     violation.affected_resource_ids,
+    violation.affected_resources,         // AI Pack raw field
     impact.affected_resource_ids
   );
   const assetIds = uniqList(
@@ -173,8 +182,14 @@ function adaptViolation(violation, context = {}) {
   );
   const affectedServices = uniqList(violation.affected_services, impact.affected_services);
   const affectedZones = uniqList(violation.affected_zones, impact.affected_zones);
+  // violation.evidence_details = AI Pack이 violation에 직접 첨부한 증거 객체 배열
+  const directEvidenceById = Object.fromEntries(
+    arr(violation.evidence_details ?? violation.evidence_summaries)
+      .map((e) => [e.evidence_id ?? e.id, e])
+      .filter(([id]) => id)
+  );
   const evidenceSummaries = evidenceIds
-    .map((evidenceId) => evidenceById[evidenceId])
+    .map((evidenceId) => evidenceById[evidenceId] ?? directEvidenceById[evidenceId])
     .filter(Boolean);
 
   return {
@@ -202,7 +217,15 @@ function adaptViolation(violation, context = {}) {
     remediation_items: remediationRows,
     impact_summary: firstNonEmpty(impact.summary, violation.summary),
     invariant_impact: Object.keys(impact).length ? impact : null,
-    ai1_trace: traceByInvariant[invariantId] ?? null,
+    ai1_trace: firstNonEmpty(
+      traceByInvariant[invariantId],
+      violation.ai1_trace,
+      violation.ai1Trace,
+      violation.trace,
+      violation.evaluation_trace,
+      violation.ai1_evaluation_trace
+    ) ?? null,
+    raw_violation: violation,
   };
 }
 
@@ -217,6 +240,21 @@ function normalizeSeverity(value = "medium") {
 function adaptChainReport(report) {
   const rawSteps = arr(report.chain_steps ?? report.step_reports ?? report.steps);
   const flowSteps = arr(report.mitre_attack_flow);
+  const variantSteps = arr(report.variants).map((variant, index) => ({
+    ...variant,
+    step_id: variant.variant_id ?? `variant-${index + 1}`,
+    order: index + 1,
+    location: first(variant.grouping_keys?.actor_id, variant.grouping_keys?.deployment_id, variant.title),
+    path: first(variant.grouping_keys?.endpoint, variant.grouping_keys?.resource_id, variant.grouping_keys?.device_id, variant.title),
+    finding: first(variant.title, variant.why_this_variant, variant.validation_method),
+    evidence_ids: variant.evidence_ids,
+    threatened_asset_ids: compact([
+      variant.grouping_keys?.resource_id,
+      variant.grouping_keys?.device_id,
+      variant.grouping_keys?.deployment_id,
+    ]),
+    redteam_focus: compact([variant.validation_method]),
+  }));
   const fallbackStepIds = rawSteps.length || flowSteps.length ? [] : arr(report.attack_chain);
   const stepSource = rawSteps.length
     ? rawSteps
@@ -228,6 +266,8 @@ function adaptChainReport(report) {
         finding: flow.step,
         chain_transition: flow.reason,
       }))
+      : variantSteps.length
+        ? variantSteps
       : fallbackStepIds.map((stepText, index) => ({
         step_id: stepText,
         order: index + 1,
@@ -250,9 +290,15 @@ function adaptChainReport(report) {
   const rawAttackChain = arr(report.attack_chain).map(chainStepText).filter(Boolean);
   return {
     ...report,
-    chain_scenario_id: first(report.chain_scenario_id, report.scenario_id, report.id),
+    chain_scenario_id: first(report.chain_scenario_id, report.scenario_id, report.chain_id, report.id),
+    chain_id: first(report.chain_id, report.chain_scenario_id, report.scenario_id, report.id),
+    chain_type: report.chain_type,
     risk_level: report.risk_level ?? "medium",
     related_invariants: arr(report.related_invariants),
+    variants: arr(report.variants),
+    variant_count: first(report.variant_count, arr(report.variants).length, 0),
+    capability_graph: obj(report.capability_graph),
+    risk_anchor: obj(report.risk_anchor),
     step_reports: steps,
     attack_chain: rawAttackChain.length
       ? rawAttackChain
@@ -261,7 +307,7 @@ function adaptChainReport(report) {
 }
 
 function chainScenarioId(chain) {
-  return first(chain?.chain_scenario_id, chain?.scenario_id, chain?.id);
+  return first(chain?.chain_scenario_id, chain?.scenario_id, chain?.chain_id, chain?.id);
 }
 
 function mergeChainSources(primaryChains, secondaryChains) {
@@ -409,6 +455,7 @@ function adaptInvariant(invariant) {
 function buildSummary(rawSummary, timeline, assets, services, violations, chains, invariants = [], scan = {}) {
   const latestMetrics = obj(arr(timeline.points).at(-1)?.metrics);
   const summary = obj(rawSummary);
+  const judgmentCounts = buildInvariantJudgmentCounts(invariants, violations);
   const inferredInvariantTotal = firstCount(
     arr(invariants).length,
     countUnique(violations.map((violation) => violation.invariant_id ?? violation.id))
@@ -416,6 +463,7 @@ function buildSummary(rawSummary, timeline, assets, services, violations, chains
   const invariantTotal = firstCount(summary.invariant_total, latestMetrics.invariant_total, inferredInvariantTotal);
   const violatedCount = first(summary.violated_invariant_count, summary.total_violations, latestMetrics.violated_invariant_count, violations.length, 0);
   const inferredAppliedCount = Math.max(invariantTotal - violatedCount, 0);
+  const attackChainCount = first(summary.attack_chains, summary.ai2_chain_scenario_count, latestMetrics.ai2_chain_scenario_count, chains.length, 0);
   return {
     ...latestMetrics,
     ...summary,
@@ -424,7 +472,12 @@ function buildSummary(rawSummary, timeline, assets, services, violations, chains
     invariant_total: invariantTotal,
     violated_invariant_count: violatedCount,
     applied_invariant_count: firstPositive(summary.applied_invariant_count, latestMetrics.applied_invariant_count, inferredAppliedCount),
-    ai2_chain_scenario_count: first(summary.ai2_chain_scenario_count, summary.attack_chains, latestMetrics.ai2_chain_scenario_count, chains.length, 0),
+    confirmed_violation_count: first(summary.confirmed_violation_count, latestMetrics.confirmed_violation_count, judgmentCounts.confirmedViolation, 0),
+    unverifiable_invariant_count: first(summary.unverifiable_invariant_count, latestMetrics.unverifiable_invariant_count, judgmentCounts.unverifiable, 0),
+    normal_or_not_observed_count: first(summary.normal_or_not_observed_count, latestMetrics.normal_or_not_observed_count, judgmentCounts.normalOrNotObserved, 0),
+    attack_chains: attackChainCount,
+    ai2_chain_scenario_count: attackChainCount,
+    critical_high: first(summary.critical_high, scan.critical_high, latestMetrics.critical_high, violations.filter((v) => ["Critical", "High"].includes(v.severity)).length, 0),
     changed_asset_count: first(summary.changed_asset_count, latestMetrics.changed_asset_count, 0),
     new_asset_count: first(summary.new_asset_count, latestMetrics.new_asset_count, 0),
     new_violations_since_previous_run: first(summary.new_violations_since_previous_run, latestMetrics.new_violation_count, 0),
@@ -486,9 +539,29 @@ export function adaptScanDetail(payload, context = {}) {
   }, {});
   const ai2Reports = arr(raw.ai2ChainReports?.reports ?? raw.ai2_chain_reports?.reports ?? raw.ai2ChainReports ?? raw.ai2_chain_reports);
   const dbChains = arr(raw.attackChains ?? raw.attack_chains);
+  const ai2ChainPayload = obj(raw.ai2ChainPayload ?? raw.ai2_chain_payload);
+  const ai2ObservedChains = arr(
+    raw.ai2ObservedChains ??
+    raw.ai2_observed_chains ??
+    raw.observedChains ??
+    raw.observed_chains ??
+    ai2ChainPayload.ai2ObservedChains ??
+    ai2ChainPayload.observed_chains
+  ).map(adaptChainReport);
+  const preventiveRiskChains = arr(
+    raw.preventiveRiskChains ??
+    raw.preventive_risk_chains ??
+    raw.ai2PreventiveRiskChains ??
+    raw.ai2_preventive_risk_chains ??
+    ai2ChainPayload.preventiveRiskChains ??
+    ai2ChainPayload.preventive_risk_chains
+  ).map(adaptChainReport);
   const chainSource = mergeChainSources(ai2Reports, dbChains);
   const chains = chainSource.map(adaptChainReport);
+  const displayChains = chains.length ? chains : ai2ObservedChains.length ? ai2ObservedChains : preventiveRiskChains;
+  const diagnosticCandidates = arr(raw.diagnosticRedteamCandidates ?? raw.diagnostic_redteam_candidates).map(adaptChainReport);
   const mitreTacticMap = adaptMitreMap(raw.mitreTacticMap ?? raw.mitre_tactic_map ?? raw.mitreMapping ?? raw.mitre_mapping);
+  const diagnosticMitreTacticMap = adaptMitreMap(raw.diagnosticMitreTacticMap ?? raw.diagnostic_mitre_tactic_map ?? {});
   const evidenceEvents = arr(raw.evidenceEvents ?? raw.evidence_events ?? raw.evidence).map(adaptEvidence);
   const evidenceById = Object.fromEntries(
     evidenceEvents
@@ -510,9 +583,9 @@ export function adaptScanDetail(payload, context = {}) {
   const services = arr(raw.services);
   const scan_id = first(raw.scan_id, raw.run_id, raw.id, context.scanId, context.scan?.scan_id);
   const scanned_at = first(raw.scanned_at, raw.created_at, raw.completed_at, context.scan?.scanned_at);
-  const baseSummary = buildSummary(raw.summary, obj(raw.securityPostureTimeline ?? raw.security_posture_timeline), assets, services, violations, chains, invariants, context.scan);
+  const baseSummary = buildSummary(raw.summary, obj(raw.securityPostureTimeline ?? raw.security_posture_timeline), assets, services, violations, displayChains, invariants, context.scan);
   const timeline = buildTimeline(raw, baseSummary, scan_id, scanned_at);
-  const summary = buildSummary(baseSummary, timeline, assets, services, violations, chains, invariants, context.scan);
+  const summary = buildSummary(baseSummary, timeline, assets, services, violations, displayChains, invariants, context.scan);
 
   return {
     ...EMPTY_DETAIL,
@@ -524,15 +597,22 @@ export function adaptScanDetail(payload, context = {}) {
     assets,
     services,
     assetChanges: arr(raw.assetChanges ?? raw.asset_changes),
+    assetScanTrend: arr(raw.assetScanTrend ?? raw.asset_scan_trend),
     assetReviewQueue: arr(raw.assetReviewQueue ?? raw.asset_review_queue),
     invariantImpact,
     violations,
     invariantReadiness: arr(raw.invariantReadiness ?? raw.invariant_readiness),
     ai1EvaluationTrace: trace,
     ai1LlmReviews: arr(raw.ai1LlmReviews ?? raw.ai1_llm_reviews),
-    attackChains: chains,
+    attackChains: displayChains,
+    observedAttackChains: ai2ObservedChains,
+    preventiveRiskChains,
+    ai2ObservedChains,
+    ai2ChainPayload,
+    diagnosticRedteamCandidates: diagnosticCandidates,
     ai2ChainReports: chains,
     mitreTacticMap,
+    diagnosticMitreTacticMap,
     securityPostureTimeline: timeline,
     pentestResults: arr(raw.pentestResults ?? raw.pentest_results ?? raw.redteam_validation).map(adaptPentest),
     ai3ReportInput: obj(raw.ai3ReportInput ?? raw.ai3_report_input),

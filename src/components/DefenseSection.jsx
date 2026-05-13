@@ -19,9 +19,15 @@ export default function DefenseSection({ summary = {}, timeline = { points: [] }
   const points = rawPoints.map((point) => ({
     date: dayCounts[dateKey(point.created_at)] > 1 ? formatShortDateTime(point.created_at) : formatShortDate(point.created_at),
     tooltip_label: `${formatDate(point.created_at)} · ${point.run_id ?? "-"}`,
-    violated: point.metrics?.violated_invariant_count ?? 0,
-    applied: firstPositive(point.metrics?.applied_invariant_count, (point.metrics?.invariant_total ?? 0) - (point.metrics?.violated_invariant_count ?? 0)),
-    chains: point.metrics?.ai2_chain_scenario_count ?? 0,
+    confirmedViolation: metricNumber(point.metrics, ["confirmed_violation_count", "violated_invariant_count", "total_violations"], 0),
+    unverifiable: metricNumber(point.metrics, ["unverifiable_invariant_count", "not_testable_invariant_count", "unknown_invariant_count"], 0),
+    normalOrNotObserved: metricNumber(point.metrics, [
+      "normal_or_not_observed_count",
+      "normal_not_observed_count",
+      "no_violation_observed_count",
+      "applied_invariant_count",
+    ], Math.max((point.metrics?.invariant_total ?? 0) - (point.metrics?.violated_invariant_count ?? 0), 0)),
+    officialAttackChains: metricNumber(point.metrics, ["ai2_chain_scenario_count", "attack_chains", "attack_chains_count"], 0),
   }));
   const highRisk = violations.filter((item) => ["Critical", "High"].includes(item.severity));
   const highRiskTotalPages = Math.max(1, Math.ceil(highRisk.length / PAGE_SIZE));
@@ -30,11 +36,11 @@ export default function DefenseSection({ summary = {}, timeline = { points: [] }
 
   return (
     <section>
-      <SectionTitle title="보안 현황" subtitle="AI 1의 결과에 기반한 보안 수준과 타임라인 " />
+      <SectionTitle title="방어 및 보안 수준" subtitle="AI 1차 검증 결과를 기반으로 보안 수준과 개선 우선순위를 확인합니다." />
       <div style={styles.kpiGrid}>
         <Metric label="적용된 불변식" value={appliedCount} />
-        <Metric label="위반된 불변식" value={violatedCount} />
-        <Metric label="새로운 위반 수" value={newViolationCount} />
+        <Metric label="위반 불변식" value={violatedCount} />
+        <Metric label="신규 위반" value={newViolationCount} />
         <Metric label="해결된 불변식" value={resolvedCount} />
       </div>
       <div style={styles.card}>
@@ -46,9 +52,10 @@ export default function DefenseSection({ summary = {}, timeline = { points: [] }
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip labelFormatter={formatTooltipLabel} />
             <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11 }} />
-            <Line dataKey="violated" name="위반 불변식" stroke="#d92d20" strokeWidth={2} />
-            <Line dataKey="applied" name="적용된 불변식" stroke="#12b76a" strokeWidth={2} />
-            <Line dataKey="chains" name="AI2 공격 체인" stroke="#2f6fed" strokeWidth={2} />
+            <Line dataKey="confirmedViolation" name="확정 위반" stroke="#d92d20" strokeWidth={2} dot={{ r: 3 }} />
+            <Line dataKey="unverifiable" name="검증 불가" stroke="#f79009" strokeWidth={2} dot={{ r: 3 }} />
+            <Line dataKey="normalOrNotObserved" name="정상/위반 미관측" stroke="#12b76a" strokeWidth={2} dot={{ r: 3 }} />
+            <Line dataKey="officialAttackChains" name="공식 공격 체인" stroke="#2f6fed" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -65,13 +72,15 @@ export default function DefenseSection({ summary = {}, timeline = { points: [] }
 
       <div style={styles.card}>
         <div style={styles.tableHeader}>
-          <h3 style={styles.cardTitle}>우선 순위 개선 대상 (critical/high)</h3>
+          <h3 style={styles.cardTitle}>우선순위 개선 대상 (critical/high)</h3>
           <span style={styles.pageSummary}>
             {highRisk.length ? `${(currentHighRiskPage - 1) * PAGE_SIZE + 1}-${Math.min(currentHighRiskPage * PAGE_SIZE, highRisk.length)} / ${highRisk.length}` : "0 / 0"}
           </span>
         </div>
         <table style={styles.table}>
-          <thead><tr>{["불변식 ID", "심각도", "위반 사유", "Evidence", "자산"].map((head) => <th key={head} style={styles.th}>{head}</th>)}</tr></thead>
+          <thead>
+            <tr>{["불변식 ID", "심각도", "위반 사유", "Evidence", "자산"].map((head) => <th key={head} style={styles.th}>{head}</th>)}</tr>
+          </thead>
           <tbody>
             {highRiskPageItems.map((item) => (
               <tr key={item.result_id ?? item.invariant_id}>
@@ -79,10 +88,10 @@ export default function DefenseSection({ summary = {}, timeline = { points: [] }
                 <td style={styles.td}><Badge value={item.severity} /></td>
                 <td style={styles.td}>{item.summary ?? item.reason}</td>
                 <td style={styles.td}><ChipList values={item.evidence_ids} /></td>
-                <td style={styles.td}><ChipList values={item.asset_ids} /></td>
+                <td style={styles.td}><ChipList values={item.affected_registry_asset_ids?.length ? item.affected_registry_asset_ids : item.asset_ids} /></td>
               </tr>
             ))}
-            {!highRisk.length && <EmptyRow colSpan={5} text="Critical 또는 High 심각도의 AI1 위반 사항이 없습니다" />}
+            {!highRisk.length && <EmptyRow colSpan={5} text="Critical 또는 High 심각도의 AI1 위반 사항이 없습니다." />}
           </tbody>
         </table>
         <Pagination page={currentHighRiskPage} totalPages={highRiskTotalPages} onPageChange={setHighRiskPage} />
@@ -100,7 +109,7 @@ function Pagination({ page, totalPages, onPageChange }) {
   const visiblePages = getVisiblePages(page, totalPages);
   return (
     <div style={styles.pagination}>
-      <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} style={pageButton(false, page <= 1)}>‹</button>
+      <button type="button" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1} style={pageButton(false, page <= 1)}>이전</button>
       {visiblePages.map((pageNumber) => (
         <button
           key={pageNumber}
@@ -111,7 +120,7 @@ function Pagination({ page, totalPages, onPageChange }) {
           {pageNumber}
         </button>
       ))}
-      <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} style={pageButton(false, page >= totalPages)}>›</button>
+      <button type="button" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages} style={pageButton(false, page >= totalPages)}>다음</button>
     </div>
   );
 }
@@ -123,11 +132,11 @@ function getVisiblePages(page, totalPages) {
 }
 
 const METRIC_LABELS = {
-  asset_count:              "분석 자산",
-  ai1_result_count:         "AI1 불변식 판단",
+  asset_count: "분석 자산",
+  ai1_result_count: "AI1 불변식 판단",
   violated_invariant_count: "위반 불변식",
-  ai2_scenario_count:       "AI2 공격 시나리오",
-  selected_evidence_count:  "커버된 Evidence",
+  ai2_scenario_count: "AI2 공격 시나리오",
+  selected_evidence_count: "커버된 Evidence",
 };
 
 function CoverageMetricCard({ metric, value }) {
@@ -147,6 +156,17 @@ function firstPositive(...values) {
 
 function firstNumber(...values) {
   return values.find((value) => typeof value === "number") ?? 0;
+}
+
+function metricNumber(metrics = {}, keys = [], fallback = 0) {
+  for (const key of keys) {
+    const value = metrics?.[key];
+    if (typeof value === "number") return value;
+    if (value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value))) {
+      return Number(value);
+    }
+  }
+  return fallback;
 }
 
 function formatShortDate(value) {

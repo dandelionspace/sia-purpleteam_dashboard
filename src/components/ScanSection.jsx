@@ -1,28 +1,41 @@
 import { useState } from "react";
-import { triggerScan } from "../services/scanService";
+import { fetchScanStatus, startScan } from "../services/scanService";
 import { EmptyRow, SectionTitle } from "./common";
 
 export default function ScanSection({ scanList = [], selectedScanId, onSelectScan, onRefresh, onTriggerComplete }) {
-  const [triggerState, setTriggerState] = useState(null);
+  const [scanState, setScanState] = useState(null);
 
-  const handleTrigger = async () => {
-    setTriggerState({ status: "running", message: "Triggering AI Pack scan..." });
+  const handleStart = async () => {
+    setScanState({ status: "checking", message: "점검 상태 확인 중..." });
     try {
-      const result = await triggerScan();
-      setTriggerState({ status: result.status ?? "submitted", message: result.message ?? result.scan_id ?? "Scan trigger submitted." });
+      const statusResult = await fetchScanStatus();
+      if (statusResult?.running) {
+        setScanState({
+          status: "running",
+          message: `점검 진행 중 — ${statusResult.elapsed_seconds != null ? `${statusResult.elapsed_seconds}초 경과` : ""} ${statusResult.snapshot_size_bytes != null ? `/ 스냅샷 ${(statusResult.snapshot_size_bytes / 1024 / 1024).toFixed(1)} MB` : ""}`.trim(),
+        });
+        return;
+      }
+      setScanState({ status: "starting", message: "새 점검 시작 중..." });
+      const result = await startScan();
+      setScanState({ status: result.status ?? "submitted", message: result.scan_id ? `scan_id: ${result.scan_id}` : "점검이 시작되었습니다." });
       await onTriggerComplete?.();
     } catch (error) {
-      setTriggerState({ status: "failed", message: error.message });
+      setScanState({ status: "failed", message: error.message });
     }
   };
+
+  const isRunning = scanState?.status === "running" || scanState?.status === "starting" || scanState?.status === "checking";
 
   return (
     <section>
       <SectionTitle title="점검 관리" subtitle="점검(scan) 이력 관리" />
       <div style={styles.actions}>
-        <button style={styles.primaryButton} onClick={handleTrigger}>점검 시작</button>
+        <button style={isRunning ? { ...styles.primaryButton, opacity: 0.5, cursor: "not-allowed" } : styles.primaryButton} onClick={handleStart} disabled={isRunning}>
+          {isRunning ? "점검 진행 중..." : "새 점검 시작"}
+        </button>
         <button style={styles.secondaryButton} onClick={() => onRefresh?.()}>점검 목록 새로 고침</button>
-        {triggerState && <span style={styles.status}>{triggerState.status}: {triggerState.message}</span>}
+        {scanState && <span style={styles.status}>[{scanState.status}] {scanState.message}</span>}
       </div>
       <div style={styles.card}>
         <table style={styles.table}>

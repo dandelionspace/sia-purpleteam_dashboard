@@ -344,7 +344,7 @@ def _fetch_invariant_defs() -> dict:
                 "invariant_source": src,
                 "severity":         sev or "Medium",
                 "type":             cat or "",
-                "default_zone":     zone or "",
+                "default_zone":     zone or None,   # None 유지: 빈 문자열이 ?? 연산자를 통과하는 버그 방지
                 "weight":           w or 1,
                 "attack_phase":     phase or "",
                 "remediation":      rem or "",
@@ -411,6 +411,7 @@ def _build_initial_invariants(inv_defs: dict = None) -> list:
     return [
         {
             "id":                         inv_id,
+            "invariant_id":               inv_id,
             "description":                meta.get("description", ""),
             "invariant_source":           meta.get("invariant_source", "fixed"),
             "severity":                   None,
@@ -538,102 +539,115 @@ def _fetch_db_services() -> list:
 
 # ── PostgreSQL Evidence 수집 (schema.sql evidence_events 테이블 기준) ─────────
 
+_EVIDENCE_SELECT = """
+    SELECT
+        evidence_id, timestamp, schema_version, trace_id, request_id,
+        event_category, evidence_type,
+        producer_vm, producer_component_id, producer_component_type,
+        producer_zone, producer_asset_id, producer_service_id,
+        actor_id, actor_role, actor_source_ip_class,
+        token_present, token_sub, token_tenant, token_kid, token_jti,
+        token_signature_valid, token_issued_by_auth_server, token_revoked,
+        access_action, access_endpoint, access_method,
+        access_decision, access_status_code,
+        target_asset_id, target_asset_type,
+        target_asset_owner_id, target_asset_tenant_id,
+        control_owner_check_performed,
+        control_tenant_check_performed,
+        control_authz_service_used,
+        raw_ref_source, raw_ref_agent, raw_ref_location, raw_ref_log_id,
+        observed
+    FROM evidence_events
+"""
+
+
+def _evidence_row_to_nested(e: dict) -> dict:
+    """flat DB 행을 UI가 기대하는 nested 구조로 변환한다."""
+    if e.get("timestamp"):
+        e["timestamp"] = e["timestamp"].isoformat()
+    e["producer"] = {
+        "vm":             e.pop("producer_vm"),
+        "component_id":   e.pop("producer_component_id"),
+        "component_type": e.pop("producer_component_type"),
+        "zone":           e.pop("producer_zone"),
+        "asset_id":       e.pop("producer_asset_id"),
+        "service_id":     e.pop("producer_service_id"),
+    }
+    actor_id = e.pop("actor_id", None)
+    e["actor"] = {
+        "actor_id":        actor_id,
+        "role":            e.pop("actor_role"),
+        "source_ip_class": e.pop("actor_source_ip_class"),
+    } if actor_id else None
+    token_present = e.pop("token_present", False)
+    e["token"] = {
+        "token_present":         token_present,
+        "token_sub":             e.pop("token_sub"),
+        "token_tenant":          e.pop("token_tenant"),
+        "token_kid":             e.pop("token_kid"),
+        "token_jti":             e.pop("token_jti"),
+        "signature_valid":       e.pop("token_signature_valid"),
+        "issued_by_auth_server": e.pop("token_issued_by_auth_server"),
+        "revoked":               e.pop("token_revoked"),
+    } if token_present else None
+    e["access"] = {
+        "action":      e.pop("access_action"),
+        "endpoint":    e.pop("access_endpoint"),
+        "method":      e.pop("access_method"),
+        "decision":    e.pop("access_decision"),
+        "status_code": e.pop("access_status_code"),
+    }
+    e["target"] = {
+        "asset_id":  e.pop("target_asset_id"),
+        "asset_type": e.pop("target_asset_type"),
+        "owner_id":   e.pop("target_asset_owner_id"),
+        "tenant_id":  e.pop("target_asset_tenant_id"),
+    }
+    e["control"] = {
+        "owner_check_performed":  e.pop("control_owner_check_performed"),
+        "tenant_check_performed": e.pop("control_tenant_check_performed"),
+        "authz_service_used":     e.pop("control_authz_service_used"),
+    }
+    e["raw_ref"] = {
+        "source":   e.pop("raw_ref_source"),
+        "agent":    e.pop("raw_ref_agent"),
+        "location": e.pop("raw_ref_location"),
+        "log_id":   e.pop("raw_ref_log_id"),
+    }
+    return e
+
+
 def _fetch_db_evidence_events(limit: int = 100) -> list:
-    """
-    evidence_events 파티션 테이블에서 최근 Evidence를 조회한다.
-    flat 컬럼을 UI가 기대하는 nested 구조로 변환한다.
-    schema.sql GROUP 4 기준.
-    """
+    """evidence_events 테이블에서 최근 Evidence를 조회한다."""
     if not HAS_PSYCOPG2:
         return []
     try:
         conn = _db_connect()
         cur  = conn.cursor()
-        cur.execute("""
-            SELECT
-                evidence_id, timestamp, schema_version, trace_id, request_id,
-                event_category, evidence_type,
-                producer_vm, producer_component_id, producer_component_type,
-                producer_zone, producer_asset_id, producer_service_id,
-                actor_id, actor_role, actor_source_ip_class,
-                token_present, token_sub, token_tenant, token_kid, token_jti,
-                token_signature_valid, token_issued_by_auth_server, token_revoked,
-                access_action, access_endpoint, access_method,
-                access_decision, access_status_code,
-                target_asset_id, target_asset_type,
-                target_asset_owner_id, target_asset_tenant_id,
-                control_owner_check_performed,
-                control_tenant_check_performed,
-                control_authz_service_used,
-                raw_ref_source, raw_ref_agent, raw_ref_location, raw_ref_log_id,
-                observed
-            FROM evidence_events
-            ORDER BY timestamp DESC
-            LIMIT %s
-        """, (limit,))
+        cur.execute(_EVIDENCE_SELECT + "ORDER BY timestamp DESC LIMIT %s", (limit,))
         rows = cur.fetchall()
         cols = [desc[0] for desc in cur.description]
         conn.close()
-
-        events = []
-        for row in rows:
-            e = dict(zip(cols, row))
-            if e.get("timestamp"):
-                e["timestamp"] = e["timestamp"].isoformat()
-            # nested 구조로 재구성 (UI 호환)
-            e["producer"] = {
-                "vm":             e.pop("producer_vm"),
-                "component_id":   e.pop("producer_component_id"),
-                "component_type": e.pop("producer_component_type"),
-                "zone":           e.pop("producer_zone"),
-                "asset_id":       e.pop("producer_asset_id"),
-                "service_id":     e.pop("producer_service_id"),
-            }
-            actor_id = e.pop("actor_id", None)
-            e["actor"] = {
-                "actor_id":       actor_id,
-                "role":           e.pop("actor_role"),
-                "source_ip_class": e.pop("actor_source_ip_class"),
-            } if actor_id else None
-            token_present = e.pop("token_present", False)
-            e["token"] = {
-                "token_present":         token_present,
-                "token_sub":             e.pop("token_sub"),
-                "token_tenant":          e.pop("token_tenant"),
-                "token_kid":             e.pop("token_kid"),
-                "token_jti":             e.pop("token_jti"),
-                "signature_valid":       e.pop("token_signature_valid"),
-                "issued_by_auth_server": e.pop("token_issued_by_auth_server"),
-                "revoked":               e.pop("token_revoked"),
-            } if token_present else None
-            e["access"] = {
-                "action":      e.pop("access_action"),
-                "endpoint":    e.pop("access_endpoint"),
-                "method":      e.pop("access_method"),
-                "decision":    e.pop("access_decision"),
-                "status_code": e.pop("access_status_code"),
-            }
-            e["target"] = {
-                "asset_id":  e.pop("target_asset_id"),
-                "asset_type": e.pop("target_asset_type"),
-                "owner_id":   e.pop("target_asset_owner_id"),
-                "tenant_id":  e.pop("target_asset_tenant_id"),
-            }
-            e["control"] = {
-                "owner_check_performed":  e.pop("control_owner_check_performed"),
-                "tenant_check_performed": e.pop("control_tenant_check_performed"),
-                "authz_service_used":     e.pop("control_authz_service_used"),
-            }
-            e["raw_ref"] = {
-                "source":   e.pop("raw_ref_source"),
-                "agent":    e.pop("raw_ref_agent"),
-                "location": e.pop("raw_ref_location"),
-                "log_id":   e.pop("raw_ref_log_id"),
-            }
-            events.append(e)
-        return events
+        return [_evidence_row_to_nested(dict(zip(cols, row))) for row in rows]
     except Exception as e:
         log.warning("DB evidence events fetch 실패: %s", e)
+        return []
+
+
+def fetch_evidence_by_ids(ids: list[str]) -> list:
+    """주어진 evidence_id 목록에 해당하는 Evidence 행을 반환한다."""
+    if not HAS_PSYCOPG2 or not ids:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute(_EVIDENCE_SELECT + "WHERE evidence_id = ANY(%s) ORDER BY timestamp DESC", (ids,))
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        return [_evidence_row_to_nested(dict(zip(cols, row))) for row in rows]
+    except Exception as e:
+        log.warning("DB evidence by IDs fetch 실패: %s", e)
         return []
 
 
@@ -1157,8 +1171,9 @@ def _fetch_db_violations_for_scan(scan_id: str) -> list:
         cur  = conn.cursor()
         cur.execute("""
             SELECT v.result_id, v.invariant_id, v.status, v.violation_reason,
-                   v.summary, v.reason, v.confidence,
+                   v.summary, v.judgment_summary, v.reason, v.confidence,
                    v.current_environment_testable, v.testability_reason, v.created_at,
+                   v.missing_evidence_fields, v.affected_assets, v.affected_resources,
                    ARRAY_REMOVE(ARRAY_AGG(DISTINCT va.asset_id), NULL)   AS asset_ids,
                    ARRAY_REMOVE(ARRAY_AGG(DISTINCT ve.evidence_id), NULL) AS evidence_ids
             FROM violations v
@@ -1178,15 +1193,18 @@ def _fetch_db_violations_for_scan(scan_id: str) -> list:
             raw = dict(zip(cols, row))
             if raw.get("created_at"):
                 raw["created_at"] = raw["created_at"].isoformat()
-            raw["asset_ids"]    = raw.get("asset_ids", []) or []
-            raw["evidence_ids"] = raw.get("evidence_ids", []) or []
+            raw["asset_ids"]              = raw.get("asset_ids", []) or []
+            raw["evidence_ids"]           = raw.get("evidence_ids", []) or []
+            raw["missing_evidence_fields"]= raw.get("missing_evidence_fields", []) or []
+            raw["affected_assets"]        = raw.get("affected_assets", []) or []
+            raw["affected_resources"]     = raw.get("affected_resources", []) or []
             # invariant 메타데이터 보완
             inv_id = raw.get("invariant_id", "")
             meta   = inv_defs.get(inv_id, {})
             raw["severity"]         = meta.get("severity") or "Medium"
             raw["description"]      = meta.get("description", "")
-            raw["server_zone"]      = meta.get("default_zone", "알 수 없음")
-            raw["zone"]             = meta.get("default_zone", "")
+            raw["server_zone"]      = meta.get("default_zone") or ""
+            raw["zone"]             = meta.get("default_zone") or ""
             raw["type"]             = meta.get("type", "")
             raw["attack_phase"]     = meta.get("attack_phase", "")
             raw["mitre_tactic"]     = meta.get("mitre_tactic", "")
@@ -1201,6 +1219,52 @@ def _fetch_db_violations_for_scan(scan_id: str) -> list:
         return violations
     except Exception as e:
         log.warning("DB violations fetch 실패: %s", e)
+        return []
+
+
+def _fetch_db_ai1_traces_for_scan(scan_id: str) -> list:
+    """ai1_traces 테이블에서 스캔의 AI1 평가 트레이스를 조회해 violations 연결 형태로 반환한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT scan_id, invariant_id, result_id, context_pack_id,
+                   evidence_refs, required_evidence_types,
+                   decision_basis, verification_logic,
+                   missing_fields, evidence_summaries
+            FROM ai1_traces
+            WHERE scan_id = %s
+            ORDER BY invariant_id
+        """, (scan_id,))
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        result = []
+        for row in rows:
+            item = dict(zip(cols, row))
+            for field in ("evidence_refs", "required_evidence_types", "missing_fields"):
+                if item.get(field) is None:
+                    item[field] = []
+            if item.get("evidence_summaries") is None:
+                item["evidence_summaries"] = []
+            # ViolationSection drawer가 기대하는 trace 구조로 래핑
+            item["invariant"] = {
+                "invariant_id":       item["invariant_id"],
+                "required_evidence":  item["required_evidence_types"],
+                "verification_logic": item.get("verification_logic"),
+            }
+            item["rule_result"] = {
+                "result_id":   item.get("result_id"),
+                "invariant_id": item["invariant_id"],
+                "reason":      item.get("decision_basis"),
+                "evidence_ids": item["evidence_refs"],
+            }
+            result.append(item)
+        return result
+    except Exception as e:
+        log.warning("DB ai1_traces fetch 실패: %s", e)
         return []
 
 
@@ -1435,6 +1499,51 @@ def _fetch_db_asset_history_monthly() -> list:
         return []
 
 
+def _fetch_db_asset_scan_trend() -> list:
+    """scans + scan_asset_snapshot JOIN으로 스캔별 전체 자산 & 위반 위협 자산 추이를 반환한다."""
+    if not HAS_PSYCOPG2:
+        return []
+    try:
+        conn = _db_connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT s.scan_id,
+                   s.scanned_at,
+                   COALESCE(sas.total, s.asset_count, 0) AS total,
+                   COALESCE(
+                       sas.with_violation,
+                       NULLIF((SELECT COUNT(DISTINCT va.asset_id)
+                               FROM violations v
+                               JOIN violation_assets va ON v.result_id = va.violation_id
+                               WHERE v.scan_id = s.scan_id
+                                 AND v.status = 'violated'), 0),
+                       NULLIF((SELECT COUNT(DISTINCT iira.asset_id)
+                               FROM invariant_impact ii
+                               JOIN invariant_impact_registry_assets iira ON ii.id = iira.impact_id
+                               WHERE ii.scan_id = s.scan_id), 0),
+                       0
+                   ) AS with_violation
+            FROM scans s
+            LEFT JOIN scan_asset_snapshot sas ON s.scan_id = sas.scan_id
+            ORDER BY s.scanned_at
+        """)
+        rows = cur.fetchall()
+        cols = [desc[0] for desc in cur.description]
+        conn.close()
+        result = []
+        for row in rows:
+            item = dict(zip(cols, row))
+            scanned_at = item.get("scanned_at")
+            if scanned_at:
+                item["date_label"] = scanned_at.strftime("%Y-%m-%d") if hasattr(scanned_at, "strftime") else str(scanned_at)[:10]
+                item["scanned_at"] = scanned_at.isoformat() if hasattr(scanned_at, "isoformat") else str(scanned_at)
+            result.append(item)
+        return result
+    except Exception as e:
+        log.warning("DB asset_scan_trend fetch 실패: %s", e)
+        return []
+
+
 def _fetch_db_scan_coverage_metrics(scan_id: str) -> list:
     """scan_coverage 테이블에서 AI Pack 분석 품질 지표(metric/value)를 조회한다."""
     if not HAS_PSYCOPG2:
@@ -1467,13 +1576,14 @@ def _fetch_db_invariant_impact_for_scan(scan_id: str) -> list:
             SELECT ii.id, ii.invariant_id, ii.result_id, ii.scan_id,
                    ii.status, ii.violation_reason, ii.severity, ii.summary,
                    ii.affected_resource_ids, ii.affected_zones,
-                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iie.evidence_id), NULL)  AS evidence_ids,
-                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iira.asset_id), NULL)    AS affected_registry_asset_ids,
-                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iis.service_id), NULL)   AS affected_services
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iie.evidence_id), NULL) AS evidence_ids,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT COALESCE(iira.asset_id, va.asset_id)), NULL) AS affected_registry_asset_ids,
+                   ARRAY_REMOVE(ARRAY_AGG(DISTINCT iis.service_id), NULL)  AS affected_services
             FROM invariant_impact ii
             LEFT JOIN invariant_impact_evidence        iie  ON ii.id = iie.impact_id
             LEFT JOIN invariant_impact_registry_assets iira ON ii.id = iira.impact_id
             LEFT JOIN invariant_impact_services        iis  ON ii.id = iis.impact_id
+            LEFT JOIN violation_assets                 va   ON ii.result_id = va.violation_id
             WHERE ii.scan_id = %s
             GROUP BY ii.id
             ORDER BY ii.id
@@ -1656,7 +1766,7 @@ def run_scan(scan_id: str) -> tuple:
     scan_time = datetime.utcnow()
     assets         = _fetch_db_assets()
     services       = _fetch_db_services()
-    evidence_events = _fetch_db_evidence_events()
+    evidence_events = _fetch_db_evidence_events(limit=1000)
 
     # scans 테이블에 저장
     _save_scan_to_db(

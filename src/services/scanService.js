@@ -1,7 +1,7 @@
 import axios from "axios";
 import sampleHealth from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-health.json";
-import sampleScanDetail from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-scan-detail-ai-run-20260511-010650.json";
-import sampleScans from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-scans.json";
+import sampleScanDetail from "../mock/api-scan-detail-ai-run-20260511-092330.json";
+import sampleScans from "../mock/api-scans.json";
 import { adaptScanDetail, adaptScanList } from "./aiPackAdapter";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
@@ -13,7 +13,7 @@ export const USE_MOCK = !ACTIVE_API_BASE_URL;
 const mockScans = adaptScanList(sampleScans);
 const mockDetails = Object.fromEntries(mockScans.map((scan) => [
   scan.scan_id,
-  scan.scan_id === "ai-run-20260511-010650"
+  scan.scan_id === "ai-run-20260511-092330"
     ? sampleScanDetail
     : { ...sampleScanDetail, scan_id: scan.scan_id, scanned_at: scan.scanned_at, status: scan.status, summary: scan },
 ]));
@@ -56,10 +56,15 @@ export async function fetchScanDetails(scanId, scanContext = null) {
   return adaptScanDetail(response.data, { scanId });
 }
 
-export async function triggerScan() {
+export async function fetchScanStatus() {
+  if (USE_MOCK) return { running: false, status: "completed", scan_id: mockScans[0]?.scan_id ?? null };
+  const response = await api.get("/scans/start/status");
+  return response.data;
+}
+
+export async function startScan() {
   if (USE_MOCK) return { scan_id: null, status: "mock" };
-  // TODO: production deployments must enforce authz on the backend before this job runs.
-  const response = await api.post("/scans/trigger");
+  const response = await api.post("/scans/start");
   return response.data;
 }
 
@@ -82,6 +87,13 @@ export async function deletePentestResult(scanId, testId) {
   if (response.data?.status !== "ok") {
     throw new Error("Pentest result was not deleted.");
   }
+  return response.data;
+}
+
+export async function fetchEvidenceByIds(ids) {
+  if (!ids?.length) return [];
+  if (USE_MOCK) return [];
+  const response = await api.post("/evidence/batch", { ids });
   return response.data;
 }
 

@@ -32,6 +32,7 @@ TABLE_ORDER = [
     "violations",
     "violation_evidence",
     "violation_assets",
+    "ai1_traces",
     "attack_chains",
     "attack_chain_steps",
     "attack_chain_invariants",
@@ -91,8 +92,45 @@ def _table_meta(cur, table_name: str) -> tuple[list[str], list[str]]:
     return columns, pk_columns
 
 
+import json as _json
+
+
 def _rows_for_table(export: dict, table_name: str) -> list[dict]:
     tables = export.get("tables", {})
+
+    # AI Pack의 ai1EvaluationTrace 배열을 ai1_traces 테이블 행으로 변환
+    if table_name == "ai1_traces":
+        # tables.ai1_traces 가 있으면 그대로, 없으면 최상위 ai1EvaluationTrace 에서 변환
+        direct = tables.get("ai1_traces")
+        if isinstance(direct, list) and direct:
+            return direct
+        scan_id = export.get("scan_id") or export.get("run_id")
+        source = export.get("ai1EvaluationTrace") or export.get("ai1_evaluation_trace") or []
+        if not isinstance(source, list) or not scan_id:
+            return []
+        rows = []
+        for trace in source:
+            if not isinstance(trace, dict):
+                continue
+            inv   = trace.get("invariant") or {}
+            rule  = trace.get("rule_result") or {}
+            inv_id = inv.get("invariant_id") or rule.get("invariant_id")
+            if not inv_id:
+                continue
+            rows.append({
+                "scan_id":                 scan_id,
+                "invariant_id":            inv_id,
+                "result_id":               rule.get("result_id"),
+                "context_pack_id":         trace.get("context_pack_id"),
+                "evidence_refs":           trace.get("evidence_refs") or [],
+                "required_evidence_types": inv.get("required_evidence") or [],
+                "decision_basis":          rule.get("reason"),
+                "verification_logic":      inv.get("verification_logic"),
+                "missing_fields":          trace.get("missing_fields") or rule.get("missing_fields") or [],
+                "evidence_summaries":      _json.dumps(trace.get("evidence_summaries") or []),
+            })
+        return rows
+
     # AI Pack의 mitre_flow_invariants(스캔 단위)를 scan_mitre_tactic_map으로 매핑
     if table_name == "scan_mitre_tactic_map":
         source_rows = tables.get("mitre_flow_invariants", [])
@@ -120,8 +158,12 @@ def _rows_for_table(export: dict, table_name: str) -> list[dict]:
             if not isinstance(row, dict):
                 continue
             r = dict(row)
-            if "title" in r and "description" not in r:
-                r["description"] = r.pop("title") or r.get("invariant_id", "")
+            # title / title_ko → description이 없을 때만 대체 (별도 title 컬럼 없음)
+            if "description" not in r:
+                r["description"] = r.pop("title_ko", None) or r.pop("title", None) or r.get("invariant_id", "")
+            else:
+                r.pop("title_ko", None)
+                r.pop("title", None)
             if "catalog_status" in r and "approval_status" not in r:
                 s = r.pop("catalog_status")
                 r["approval_status"] = s if s in ("approved", "draft") else "approved"
@@ -160,8 +202,10 @@ def _sanitize_row(table_name: str, row: dict, allowed_columns: list[str]) -> dic
 
 
 # ingest 시 ON CONFLICT UPDATE에서 덮어쓰지 않을 컬럼 (사용자가 직접 설정한 값 보호)
+# default_zone: 불변식 정의 기반 수동 관리 (update_invariant_default_zone.sql)
+#              AI Pack이 영향받은 zone을 보내도 덮어쓰면 안 됨
 _PRESERVE_ON_CONFLICT: dict[str, set[str]] = {
-    "invariants": {"invariant_source", "state", "approval_status"},
+    "invariants": {"invariant_source", "state", "approval_status", "default_zone"},
 }
 
 

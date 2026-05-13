@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, ChipList, SectionTitle } from "./common";
 import { sourceMatches } from "../utils/invariantSource";
+import { formatServerZone } from "../utils/zoneDisplay";
 
 const NODE_COLORS = [
   { bg: "#EEF4F8", text: "#24425C" },
@@ -51,21 +52,25 @@ const DETAIL_TABS = [
   { key: "evidence", label: "Evidence / 자산" },
 ];
 
-export default function AttackSection({ attackChains = [], mitreTacticMap = {}, violations = [], activeFilter = "all" }) {
+export default function AttackSection({ attackChains = [], diagnosticRedteamCandidates = [], mitreTacticMap = {}, diagnosticMitreTacticMap = {}, violations = [], activeFilter = "all" }) {
   const filteredViolations = activeFilter === "all"
     ? violations
     : violations.filter((item) => sourceMatches(item.invariant_source ?? item.source, activeFilter));
 
+  const officialMitreMissing = mitreTacticMap?.mapping_status === "missing_or_insufficient_evidence" || (mitreTacticMap?.active_tactic_count === 0 && !mitreTacticMap?.tactics?.some?.((t) => t.active));
+  const effectiveMitreMap = officialMitreMissing ? diagnosticMitreTacticMap : mitreTacticMap;
+  const mitreDiagnostic = officialMitreMissing && Object.keys(diagnosticMitreTacticMap).length > 0;
+
   return (
     <section>
-      <MitreHeatmap violations={filteredViolations} mitreTacticMap={mitreTacticMap} />
-      <SectionTitle title="AI 공격 체인" subtitle="AI 2가 분석한 공격 시나리오" />
+      <MitreHeatmap violations={filteredViolations} mitreTacticMap={effectiveMitreMap} isDiagnostic={mitreDiagnostic} officialMissing={officialMitreMissing} />
+      <SectionTitle title="공식 AI 공격 체인" subtitle="AI2가 공식으로 생성한 Red Team 시나리오 후보" />
       {attackChains.length ? (
         attackChains.map((chain, index) => (
           <ChainCard key={chain.chain_scenario_id} chain={chain} chainIndex={index + 1} violations={filteredViolations} />
         ))
       ) : (
-        <div style={styles.card}>No AI2 chain reports were returned.</div>
+        <div style={styles.card}>공식 AI2 공격 체인이 없습니다.</div>
       )}
     </section>
   );
@@ -73,7 +78,7 @@ export default function AttackSection({ attackChains = [], mitreTacticMap = {}, 
 
 // ── MITRE ATT&CK 히트맵 (구 버전 스타일) ────────────────────────────────────
 
-function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
+function MitreHeatmap({ violations = [], mitreTacticMap = {}, isDiagnostic = false, officialMissing = false }) {
   const [selected, setSelected] = useState(null);
 
   const violationById = Object.fromEntries(
@@ -119,7 +124,16 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
 
   return (
     <section style={{ marginBottom: 22 }}>
-      <SectionTitle title="MITRE ATT&CK Map - 탐지된 전술/기법" subtitle="공격 체인과 연결된 MITRE 전술 및 기법" />
+      <SectionTitle
+        title={isDiagnostic ? "MITRE ATT&CK Map - 진단용 추정 매핑" : "MITRE ATT&CK Map - 탐지된 전술/기법"}
+        subtitle={isDiagnostic ? "불변식 카테고리 기반 진단용 보조 매핑 (공식 매핑 아님)" : "공격 체인과 연결된 MITRE 전술 및 기법"}
+      />
+      {officialMissing && (
+        <div style={styles.mitreNotice}>
+          공식 MITRE 매핑 상태: <strong>missing_or_insufficient_evidence</strong> — evidence 부족으로 공식 매핑이 없습니다.
+          {isDiagnostic ? " 아래는 불변식 카테고리 기반 진단용 추정 매핑입니다." : ""}
+        </div>
+      )}
       <div style={styles.card}>
         <div style={{ overflowX: "auto", paddingBottom: 8 }}>
           <div style={{ minWidth: ALL_TACTICS.length * 92 }}>
@@ -234,7 +248,7 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
                     <span style={{ color: "#444", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {v.summary ?? v.description}
                     </span>
-                    {v.zone && <span style={{ color: "#73726c", flexShrink: 0, fontSize: 11 }}>{v.zone}</span>}
+                    {v.zone && <span style={{ color: "#73726c", flexShrink: 0, fontSize: 11 }}>{formatServerZone(v.zone)}</span>}
                   </div>
                 );
               })}
@@ -248,7 +262,7 @@ function MitreHeatmap({ violations = [], mitreTacticMap = {} }) {
 
 // ── 공격 체인 카드 ───────────────────────────────────────────────────────────
 
-function ChainCard({ chain, chainIndex, violations = [] }) {
+function ChainCard({ chain, chainIndex, violations = [], isDiagnostic = false }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("flow");
   const steps = normalizeChainSteps(chain, violations);
@@ -256,16 +270,25 @@ function ChainCard({ chain, chainIndex, violations = [] }) {
   const title = chain.title ?? chain.executive_summary ?? "Untitled attack chain";
 
   return (
-    <article style={styles.card}>
+    <article style={isDiagnostic ? { ...styles.card, ...styles.cardDiagnostic } : styles.card}>
       <div style={styles.chainHeader}>
         <div style={{ minWidth: 0 }}>
           <h3 style={styles.chainTitle}>{chainIndex}. {title}</h3>
           <div style={styles.metaRow}>
             <span style={styles.chainId}>{chain.chain_scenario_id}</span>
+            {isDiagnostic && <span style={styles.diagnosticBadge}>진단용</span>}
             {chain.risk_level && <Badge value={capitalize(chain.risk_level)} />}
             {riskScore !== null && <span style={styles.riskScore}>위험도 {riskScore}</span>}
+            {chain.scenario_basis?.violation_reason && (
+              <span style={styles.mitreBadge}>{chain.scenario_basis.violation_reason}</span>
+            )}
           </div>
           <ChipList values={chain.related_invariants} />
+          {chain.scenario_basis?.summary && (
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: "#667085", lineHeight: 1.5 }}>
+              {chain.scenario_basis.summary}
+            </p>
+          )}
         </div>
         <button style={styles.smallButton} onClick={() => setOpen((value) => !value)}>
           {open ? "닫기" : "상세 보기"}
@@ -331,7 +354,7 @@ function KillChainList({ steps = [] }) {
               <ChipList values={step.related_invariants} />
             </div>
             <p style={styles.killChainFinding}>{stepTitle(step)}</p>
-            {step.reason && <p style={styles.killChainReason}>{step.reason}</p>}
+            {step.reason && !isMitreMetaNote(step.reason) && <p style={styles.killChainReason}>{step.reason}</p>}
           </div>
         </div>
       ))}
@@ -490,6 +513,12 @@ function getExplicitRiskScore(chain) {
   return Number.isFinite(score) ? score : null;
 }
 
+function isMitreMetaNote(text) {
+  if (!text) return false;
+  const t = String(text).toLowerCase();
+  return t.includes("mitre는 체인") || t.includes("보조 라벨") || t.startsWith("mitre is ");
+}
+
 function firstUsefulText(...values) {
   return values.find((value) => {
     if (value === null || value === undefined) return false;
@@ -521,6 +550,10 @@ function capitalize(value) {
 
 const styles = {
   card: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 12, padding: 18, marginBottom: 12 },
+  cardDiagnostic: { background: "#FFFBEB", border: "0.5px solid #FDE68A" },
+  diagnosticBadge: { fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "2px 7px", borderRadius: 5 },
+  diagnosticNotice: { background: "#FEF3C7", border: "0.5px solid #FDE68A", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#92400E", marginBottom: 12 },
+  mitreNotice: { background: "#F1F5F9", border: "0.5px solid #CBD5E1", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#475569", marginBottom: 8 },
   chainHeader: { display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 14 },
   chainTitle: { margin: "0 0 8px", fontSize: 14, color: "#1a1a18", lineHeight: 1.45 },
   metaRow: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 },

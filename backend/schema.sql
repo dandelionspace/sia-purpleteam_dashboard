@@ -238,11 +238,15 @@ CREATE TABLE violations (
                                         'control_not_observed', 'environment_not_ready', NULL
                                     )),
     summary                         TEXT,
+    judgment_summary                TEXT,                  -- AI Pack 직접 판단 요약
     reason                          TEXT,
     confidence                      NUMERIC                CHECK (confidence BETWEEN 0 AND 1),
     current_environment_testable    BOOLEAN,
     testability_reason              TEXT,
-    created_at                      TIMESTAMPTZ
+    created_at                      TIMESTAMPTZ,
+    missing_evidence_fields         TEXT[]      DEFAULT '{}',
+    affected_assets                 TEXT[]      DEFAULT '{}',
+    affected_resources              TEXT[]      DEFAULT '{}'
 );
 
 CREATE INDEX idx_violations_scan        ON violations (scan_id);
@@ -566,6 +570,30 @@ CREATE TABLE IF NOT EXISTS scan_mitre_tactic_map (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_mitre_tactic_scan ON scan_mitre_tactic_map (scan_id);
+
+
+-- =============================================================================
+-- GROUP 11. AI1 평가 트레이스
+-- AI Pack ai1EvaluationTrace 배열을 스캔·불변식 단위로 저장한다.
+-- violations에 ai1_trace를 연결하는 핵심 테이블.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS ai1_traces (
+    scan_id                  VARCHAR     NOT NULL REFERENCES scans(scan_id),
+    invariant_id             VARCHAR     NOT NULL REFERENCES invariants(invariant_id),
+    result_id                VARCHAR     REFERENCES violations(result_id),
+    context_pack_id          VARCHAR,
+    evidence_refs            TEXT[]      DEFAULT '{}',    -- trace.evidence_refs (matched evidence IDs)
+    required_evidence_types  TEXT[]      DEFAULT '{}',    -- trace.invariant.required_evidence
+    decision_basis           TEXT,                        -- trace.rule_result.reason
+    verification_logic       TEXT,                        -- trace.invariant.verification_logic
+    missing_fields           TEXT[]      DEFAULT '{}',
+    evidence_summaries       JSONB       DEFAULT '[]'::jsonb,
+    PRIMARY KEY (scan_id, invariant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai1_traces_scan     ON ai1_traces (scan_id);
+CREATE INDEX IF NOT EXISTS idx_ai1_traces_result   ON ai1_traces (result_id);
 
 
 -- -----------------------------------------------------------------------------

@@ -41,10 +41,13 @@ from scanner import (
     _fetch_db_scan_coverage_metrics,
     _fetch_db_asset_events,
     _fetch_db_asset_history_monthly,
+    _fetch_db_asset_scan_trend,
+    _fetch_db_ai1_traces_for_scan,
     _build_mitre_mapping, _fetch_scan_mitre_tactic_map, _calc_coverage,
     _build_initial_invariants, _fetch_invariant_defs,
     _calc_severity_dist, _calc_zone_violations, _calc_type_violations,
     _save_scan_to_db, save_pentest_to_db, delete_pentest_from_db,
+    fetch_evidence_by_ids,
     HAS_PSYCOPG2,
 )
 from ingestion import ingest_dashboard_export
@@ -81,9 +84,10 @@ def _augment_latest_detail_from_ai_pack(scan_id: str, detail: dict) -> dict:
     if scan_id != _ai_latest_run_id():
         return detail
 
-    ai2     = _ai_latest_json("ai2-chain-scenarios.json", {})
-    mitre   = _ai_latest_json("mitre-tactic-map.json", {})
+    ai2      = _ai_latest_json("ai2-chain-scenarios.json", {})
+    mitre    = _ai_latest_json("mitre-tactic-map.json", {})
     timeline = _ai_latest_json("security-posture-timeline.json", {})
+    ai1_file = _ai_latest_json("ai1-evaluation-traces.json", None)
 
     chains = ai2.get("scenarios") if isinstance(ai2, dict) else None
     if chains:
@@ -93,6 +97,12 @@ def _augment_latest_detail_from_ai_pack(scan_id: str, detail: dict) -> dict:
         detail["mitreTacticMap"] = mitre
     if timeline:
         detail["securityPostureTimeline"] = timeline
+
+    # ai1_traces: DB 조회 결과가 비어 있을 때만 파일로 보강
+    if ai1_file and not detail.get("ai1EvaluationTrace"):
+        traces = ai1_file if isinstance(ai1_file, list) else ai1_file.get("traces", [])
+        if traces:
+            detail["ai1EvaluationTrace"] = traces
 
     return detail
 
@@ -121,9 +131,11 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
     scan_coverage = _fetch_db_scan_coverage_metrics(scan_id)
     asset_events  = _fetch_db_asset_events()
     asset_history = _fetch_db_asset_history_monthly()
+    asset_scan_trend = _fetch_db_asset_scan_trend()
     assets        = _fetch_db_assets()
     services      = _fetch_db_services()
-    evidence      = _fetch_db_evidence_events()
+    evidence      = _fetch_db_evidence_events(limit=1000)
+    ai1_traces    = _fetch_db_ai1_traces_for_scan(scan_id)
     inv_defs      = _fetch_invariant_defs()
     timeline      = _build_security_posture_timeline()
 
@@ -143,6 +155,7 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
             inv["current_environment_testable"] = v.get("current_environment_testable", False)
             inv["testability_reason"]           = v.get("testability_reason", "")
 
+    judgment_counts = _count_invariant_judgments(inv_list, violations)
     invariant_total = len(inv_list)
     violated_count = len([v for v in violations if v.get("status") == "violated"])
     applied_count = max(invariant_total - violated_count, 0)
@@ -152,6 +165,9 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
             "total_violations":        violated_count,
             "violated_invariant_count": violated_count,
             "applied_invariant_count":  applied_count,
+            "confirmed_violation_count": judgment_counts["confirmed_violation_count"],
+            "unverifiable_invariant_count": judgment_counts["unverifiable_invariant_count"],
+            "normal_or_not_observed_count": judgment_counts["normal_or_not_observed_count"],
             "invariant_total":         invariant_total,
             "critical_high":           sum(1 for v in violations if v.get("severity") in ("Critical", "High")),
             "attack_chains":           len(attack_chains),
@@ -173,9 +189,60 @@ def _db_load_scan_detail(scan_id: str) -> Optional[dict]:
         "remediations":         remediations,
         "assetEvents":          asset_events,
         "assetHistoryMonthly":  asset_history,
+        "assetScanTrend":       asset_scan_trend,
         "securityPostureTimeline": timeline,
+        "ai1EvaluationTrace":   ai1_traces,
     }
     return _augment_latest_detail_from_ai_pack(scan_id, detail)
+
+
+def _count_invariant_judgments(invariants: list[dict], violations: list[dict]) -> dict:
+    by_id = {}
+    for item in invariants:
+        inv_id = item.get("invariant_id") or item.get("id")
+        if inv_id:
+            by_id[inv_id] = dict(item)
+    for item in violations:
+        inv_id = item.get("invariant_id") or item.get("id")
+        if inv_id:
+            by_id[inv_id] = {**by_id.get(inv_id, {}), **item}
+
+    counts = {
+        "confirmed_violation_count": 0,
+        "unverifiable_invariant_count": 0,
+        "normal_or_not_observed_count": 0,
+    }
+    for item in by_id.values():
+        bucket = _classify_invariant_judgment(item)
+        counts[bucket] += 1
+    return counts
+
+
+def _classify_invariant_judgment(item: dict) -> str:
+    status = str(item.get("evaluation_status") or item.get("status") or item.get("last_result_status") or "").strip().lower()
+    reason = str(item.get("violation_reason") or item.get("last_violation_reason") or item.get("reason") or "").strip().lower()
+    testable = item.get("current_environment_testable")
+    normal_statuses = {
+        "applied",
+        "normal",
+        "ok",
+        "passed",
+        "pass",
+        "not_violated",
+        "no_violation",
+        "not_observed",
+        "no_violation_observed",
+    }
+
+    if status == "violated" and reason == "clear_violation":
+        return "confirmed_violation_count"
+    if testable is False or status in {"unknown", "inconclusive", "unverified", "not_testable"}:
+        return "unverifiable_invariant_count"
+    if status == "violated" or reason:
+        return "confirmed_violation_count"
+    if status in normal_statuses or not status:
+        return "normal_or_not_observed_count"
+    return "unverifiable_invariant_count"
 
 
 def _build_security_posture_timeline() -> dict:
@@ -467,6 +534,18 @@ def create_invariant(body: InvariantDefBody):
         body.remediation,
     )
     return {"status": "ok" if ok else "db_unavailable", "id": body.id}
+
+
+class EvidenceBatchRequest(BaseModel):
+    ids: list[str] = []
+
+
+@app.post("/api/evidence/batch")
+def get_evidence_batch(body: EvidenceBatchRequest):
+    """evidence_id 목록으로 Evidence 상세 일괄 조회."""
+    if not body.ids:
+        return []
+    return fetch_evidence_by_ids(body.ids)
 
 
 @app.get("/api/health")
