@@ -7,6 +7,7 @@ import EvidenceSection from "../components/EvidenceSection";
 import InvariantSection from "../components/InvariantSection";
 import ViolationAnalysisPage from "./ViolationAnalysisPage";
 import KpiCards from "../components/KpiCards";
+import PenetrationScenarioSection from "../components/PenetrationScenarioSection";
 import PentestSection from "../components/PentestSection";
 import ScanSection from "../components/ScanSection";
 import ViolationSection from "../components/ViolationSection";
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { id: "overview", icon: "OV", label: "보안 현황", sections: ["kpi", "violation", "attack"] },
   { id: "invariants", icon: "IV", label: "불변식 상세", sections: ["invariant"] },
   { id: "evidence", icon: "EV", label: "Evidence", sections: ["evidence"] },
+  { id: "penetration", icon: "PS", label: "침투 시나리오", sections: ["penetration"] },
   { id: "pentest", icon: "PT", label: "모의 침투 결과", sections: ["pentest"] },
   { id: "assets", icon: "AS", label: "자산 관리", sections: ["asset"] },
   { id: "defense", icon: "DF", label: "방어 및 보안 조치", sections: ["defense"] },
@@ -208,6 +210,16 @@ export default function Dashboard() {
                     violations={violations}
                     invariants={detail?.invariants ?? []}
                     onBack={() => setEvidenceTarget(null)}
+                  />
+                )}
+
+                {current.sections.includes("penetration") && !evidenceTarget && (
+                  <PenetrationScenarioSection
+                    attackChains={attackChains}
+                    preventiveRiskChains={detail?.preventiveRiskChains ?? []}
+                    observedAttackChains={detail?.observedAttackChains ?? detail?.ai2ObservedChains ?? []}
+                    ai2ChainPayload={detail?.ai2ChainPayload ?? {}}
+                    violations={violations}
                   />
                 )}
 

@@ -47,6 +47,7 @@ function normalizeSev(sev) {
 const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low"];
 
 const DETAIL_TABS = [
+  { key: "variants", label: "검증 경로" },
   { key: "flow", label: "공격 흐름" },
   { key: "invariants", label: "취약점 및 기법" },
   { key: "evidence", label: "Evidence / 자산" },
@@ -268,6 +269,8 @@ function ChainCard({ chain, chainIndex, violations = [], isDiagnostic = false })
   const steps = normalizeChainSteps(chain, violations);
   const riskScore = getExplicitRiskScore(chain);
   const title = chain.title ?? chain.executive_summary ?? "Untitled attack chain";
+  const variants = asArray(chain.variants);
+  const isPreventive = chain.chain_type?.includes?.("preventive") || variants.length > 0;
 
   return (
     <article style={isDiagnostic ? { ...styles.card, ...styles.cardDiagnostic } : styles.card}>
@@ -277,6 +280,7 @@ function ChainCard({ chain, chainIndex, violations = [], isDiagnostic = false })
           <div style={styles.metaRow}>
             <span style={styles.chainId}>{chain.chain_scenario_id}</span>
             {isDiagnostic && <span style={styles.diagnosticBadge}>진단용</span>}
+            {isPreventive && <span style={styles.diagnosticBadge}>예방형 검증 후보</span>}
             {chain.risk_level && <Badge value={capitalize(chain.risk_level)} />}
             {riskScore !== null && <span style={styles.riskScore}>위험도 {riskScore}</span>}
             {chain.scenario_basis?.violation_reason && (
@@ -289,6 +293,7 @@ function ChainCard({ chain, chainIndex, violations = [], isDiagnostic = false })
               {chain.scenario_basis.summary}
             </p>
           )}
+          <RiskAnchorSummary chain={chain} />
         </div>
         <button style={styles.smallButton} onClick={() => setOpen((value) => !value)}>
           {open ? "닫기" : "상세 보기"}
@@ -307,11 +312,38 @@ function ChainCard({ chain, chainIndex, violations = [], isDiagnostic = false })
             ))}
           </div>
           {tab === "flow" && <KillChainList steps={steps} />}
+          {tab === "variants" && <VariantList variants={variants} />}
           {tab === "invariants" && <InvariantList chain={chain} violations={violations} />}
           {tab === "evidence" && <EvidenceAssetList steps={steps} />}
         </div>
       )}
     </article>
+  );
+}
+
+function RiskAnchorSummary({ chain }) {
+  const anchor = chain.risk_anchor ?? {};
+  const rows = [
+    ["family", anchor.family],
+    ["mode", anchor.mode],
+    ["actors", anchor.actors],
+    ["endpoints", anchor.endpoints],
+    ["resources", anchor.resource_ids],
+    ["deployments", anchor.deployment_ids],
+    ["firmware", anchor.firmware_hashes],
+    ["devices", anchor.device_ids],
+  ].filter(([, value]) => hasDisplayValue(value));
+
+  if (!rows.length) return null;
+  return (
+    <div style={styles.anchorGrid}>
+      {rows.slice(0, 8).map(([label, value]) => (
+        <div key={label} style={styles.anchorItem}>
+          <span style={styles.anchorLabel}>{label}</span>
+          <strong style={styles.anchorValue}>{formatCompactValue(value)}</strong>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -402,8 +434,42 @@ function EvidenceAssetList({ steps = [] }) {
           <DetailLine label="관련 자산" value={<ChipList values={step.threatened_asset_ids} />} />
           <DetailLine label="관련 불변식" value={<ChipList values={step.related_invariants} />} />
           <DetailLine label="Reason" value={step.violation_point || step.reason} />
+          <DetailLine label="검증 방법" value={step.validation_method} />
+          <DetailLine label="Redteam ready" value={formatBoolean(step.redteam_ready)} />
+          <DetailLine label="응답 필드" value={asArray(step.response_fields).length ? <ChipList values={step.response_fields} /> : null} />
+          <DetailLine label="부족한 필드" value={asArray(step.missing_fields).length ? <ChipList values={step.missing_fields} /> : null} />
+          <DetailLine label="관측 통제값" value={hasDisplayValue(step.observed_controls) ? <KeyValueList value={step.observed_controls} /> : null} />
         </div>
       ))}
+    </div>
+  );
+}
+
+function VariantList({ variants = [] }) {
+  if (!variants.length) return <p style={styles.emptyText}>세부 검증 경로 데이터가 없습니다.</p>;
+  return (
+    <div style={styles.variantGrid}>
+      {variants.map((variant, index) => {
+        const keys = variant.grouping_keys ?? {};
+        return (
+          <div key={variant.variant_id ?? index} style={styles.variantCard}>
+            <div style={styles.evidenceHeader}>
+              <strong>{index + 1}. {variant.title ?? variant.variant_id}</strong>
+              <span>{variant.redteam_ready ? "ready" : "needs data"}</span>
+            </div>
+            <DetailLine label="Actor" value={keys.actor_id ?? formatPathNode(variant, "actor")} />
+            <DetailLine label="Endpoint" value={keys.endpoint ?? formatPathNode(variant, "endpoint")} />
+            <DetailLine label="Resource" value={keys.resource_id ?? formatPathNode(variant, "resource")} />
+            <DetailLine label="Deployment" value={keys.deployment_id ?? formatPathNode(variant, "deployment")} />
+            <DetailLine label="Device" value={keys.device_id ?? formatPathNode(variant, "device")} />
+            <DetailLine label="검증 방법" value={variant.validation_method} />
+            <DetailLine label="응답 필드" value={asArray(variant.response_fields ?? variant.sensitive_response_fields).length ? <ChipList values={variant.response_fields ?? variant.sensitive_response_fields} /> : null} />
+            <DetailLine label="부족한 필드" value={asArray(variant.missing_fields).length ? <ChipList values={variant.missing_fields} /> : null} />
+            <DetailLine label="Evidence" value={asArray(variant.evidence_ids).length ? <ChipList values={variant.evidence_ids} /> : null} />
+            <DetailLine label="관측 통제값" value={hasDisplayValue(variant.observed_controls) ? <KeyValueList value={variant.observed_controls} /> : null} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -412,12 +478,13 @@ function normalizeChainSteps(chain, violations) {
   const flowSteps = asArray(chain.mitre_attack_flow);
   const attackSteps = asArray(chain.attack_chain);
   const rawSteps = asArray(chain.step_reports);
-  const maxLength = Math.max(flowSteps.length, attackSteps.length, rawSteps.length);
+  const variantSteps = asArray(chain.variants);
+  const maxLength = Math.max(flowSteps.length, attackSteps.length, rawSteps.length, variantSteps.length);
 
   return Array.from({ length: maxLength }, (_, index) => {
     const flow = flowSteps[index] ?? {};
     const attackStep = attackSteps[index];
-    const raw = rawSteps[index] ?? {};
+    const raw = rawSteps[index] ?? variantSteps[index] ?? {};
     const order = flow.order ?? flow.flow_order ?? raw.order ?? raw.step_order ?? index + 1;
     const tactic = flow.tactic ?? raw.tactic ?? raw.tactic_id;
     const technique = flow.technique ?? raw.technique ?? raw.technique_id;
@@ -435,9 +502,12 @@ function normalizeChainSteps(chain, violations) {
       raw.violation_point,
       raw.title,
       raw.path,
+      formatVariantPath(raw),
       attackStep,
       raw.chain_transition,
       raw.reason,
+      raw.validation_method,
+      raw.why_this_variant,
       chain.scenario_basis?.summary,
       chain.testability_reason,
       fallbackViolation?.summary,
@@ -452,7 +522,12 @@ function normalizeChainSteps(chain, violations) {
       technique_name: flow.technique_name ?? raw.technique_name,
       step: stepText,
       violation_point: firstUsefulText(raw.violation_point, raw.finding),
-      reason: firstUsefulText(raw.chain_transition, raw.transition_to_next, raw.reason, flow.reason, fallbackViolation?.reason),
+      reason: firstUsefulText(raw.chain_transition, raw.transition_to_next, raw.reason, raw.why_this_variant, flow.reason, fallbackViolation?.reason),
+      validation_method: firstUsefulText(raw.validation_method, raw.redteam_focus?.[0]),
+      redteam_ready: raw.redteam_ready,
+      observed_controls: raw.observed_controls,
+      response_fields: asArray(raw.response_fields ?? raw.sensitive_response_fields),
+      missing_fields: asArray(raw.missing_fields),
       related_invariants: related,
       evidence_ids: unique([
         ...asArray(raw.evidence_ids ?? raw.evidence_refs ?? raw.matched_evidence_ids),
@@ -460,6 +535,9 @@ function normalizeChainSteps(chain, violations) {
       ]),
       threatened_asset_ids: unique([
         ...asArray(raw.threatened_asset_ids ?? raw.affected_asset_ids ?? raw.asset_ids ?? raw.target_asset_ids),
+        raw.grouping_keys?.resource_id,
+        raw.grouping_keys?.device_id,
+        raw.grouping_keys?.deployment_id,
         ...linkedViolations.flatMap((violation) => asArray(violation.asset_ids ?? violation.affected_registry_asset_ids ?? violation.affected_asset_ids)),
       ]),
     };
@@ -467,11 +545,23 @@ function normalizeChainSteps(chain, violations) {
 }
 
 function DetailLine({ label, value }) {
-  if (!value) return null;
+  if (!hasDisplayValue(value)) return null;
   return (
     <div style={styles.detailLine}>
       <span>{label}</span>
       <div>{value}</div>
+    </div>
+  );
+}
+
+function KeyValueList({ value }) {
+  const entries = Object.entries(value ?? {}).filter(([, item]) => item !== null && item !== undefined && item !== "");
+  if (!entries.length) return null;
+  return (
+    <div style={styles.kvList}>
+      {entries.map(([key, item]) => (
+        <span key={key}><strong>{key}</strong>: {String(item)}</span>
+      ))}
     </div>
   );
 }
@@ -485,6 +575,40 @@ function flowNodeLabel(step) {
 function stepTitle(step) {
   const title = firstUsefulText(step.step, formatTechniqueLabel(step), formatTacticLabel(step));
   return stripLeadingStepNumber(title) || "공격 흐름 정보 없음";
+}
+
+function formatVariantPath(variant = {}) {
+  const nodes = asArray(variant.path).map((node) => node?.value).filter(Boolean);
+  if (nodes.length) return nodes.join(" -> ");
+  const keys = variant.grouping_keys ?? {};
+  return compact([keys.actor_id, keys.endpoint, keys.resource_id, keys.deployment_id, keys.device_id]).join(" -> ");
+}
+
+function formatPathNode(variant = {}, nodeType) {
+  return asArray(variant.path).find((node) => node?.node_type === nodeType)?.value;
+}
+
+function formatCompactValue(value) {
+  const items = asArray(value);
+  if (!items.length) return String(value ?? "-");
+  const shown = items.slice(0, 3).join(", ");
+  return items.length > 3 ? `${shown} +${items.length - 3}` : shown;
+}
+
+function formatBoolean(value) {
+  if (value === true) return "ready";
+  if (value === false) return "needs data";
+  return "";
+}
+
+function hasDisplayValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") {
+    if (value.$$typeof) return true;
+    return Object.keys(value).length > 0;
+  }
+  return true;
 }
 
 function stripLeadingStepNumber(value) {
@@ -541,7 +665,11 @@ function invariantRefId(value) {
 }
 
 function unique(values) {
-  return [...new Set(asArray(values))];
+  return [...new Set(asArray(values).filter(Boolean))];
+}
+
+function compact(values = []) {
+  return values.filter((value) => value !== null && value !== undefined && value !== "");
 }
 
 function capitalize(value) {
@@ -560,6 +688,10 @@ const styles = {
   chainId: { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 11, color: "#0b2f57", overflowWrap: "anywhere" },
   smallButton: { border: "0.5px solid rgba(0,0,0,0.12)", background: "#fff", color: "#73726c", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 12 },
   riskScore: { fontSize: 11, fontWeight: 700, background: "#E6F1FB", color: "#0C447C", padding: "3px 10px", borderRadius: 999 },
+  anchorGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8, marginTop: 10 },
+  anchorItem: { border: "0.5px solid rgba(12,68,124,0.14)", background: "#F8FAFC", borderRadius: 8, padding: "8px 10px", display: "grid", gap: 3 },
+  anchorLabel: { fontSize: 10, color: "#667085" },
+  anchorValue: { fontSize: 11, color: "#0C447C", overflowWrap: "anywhere" },
   flowRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-start", margin: "12px 0 6px" },
   flowItem: { display: "flex", alignItems: "center", gap: 6 },
   flowNode: { padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, minWidth: 110, maxWidth: 170, minHeight: 34, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", lineHeight: 1.25, border: "0.5px solid #DCE6EE" },
@@ -576,9 +708,12 @@ const styles = {
   invariantCard: { border: "0.5px solid rgba(0,0,0,0.08)", borderRadius: 8, padding: "10px 12px", background: "#FAFBFC" },
   monoText: { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", color: "#0C447C", fontSize: 12 },
   evidenceGrid: { display: "grid", gap: 10 },
+  variantGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 10 },
+  variantCard: { border: "0.5px solid rgba(0,0,0,0.08)", background: "#fff", borderRadius: 10, padding: 14 },
   evidenceCard: { border: "0.5px solid rgba(0,0,0,0.08)", background: "#F8FAFC", borderRadius: 10, padding: 14 },
   evidenceHeader: { display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10, color: "#185FA5", fontSize: 13, alignItems: "flex-start" },
   detailLine: { display: "grid", gridTemplateColumns: "150px 1fr", gap: 12, padding: "8px 12px", borderTop: "0.5px solid rgba(0,0,0,0.08)", fontSize: 12, color: "#1a1a18" },
+  kvList: { display: "flex", flexWrap: "wrap", gap: 6 },
   emptyText: { fontSize: 12, color: "#98a2b3", textAlign: "center", padding: "20px 0", margin: 0 },
 };
 
