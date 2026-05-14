@@ -4,6 +4,30 @@ import { ChipList, EmptyRow, SectionTitle } from "./common";
 import { formatServerZone } from "../utils/zoneDisplay";
 
 const PAGE_SIZE = 10;
+
+function ExpandableChipList({ values = [], max = 3 }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!values.length) return <span style={{ color: "#98a2b3" }}>-</span>;
+  const visible = expanded ? values : values.slice(0, max);
+  const hidden = values.length - max;
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+      {visible.map((value) => (
+        <span key={value} style={{ borderRadius: 4, padding: "2px 7px", background: "#F1F5F9", color: "#475569", fontSize: 10 }}>{value}</span>
+      ))}
+      {!expanded && hidden > 0 && (
+        <button type="button" onClick={() => setExpanded(true)} style={{ borderRadius: 4, padding: "2px 7px", background: "#EEF4FD", color: "#185FA5", fontSize: 10, border: "none", cursor: "pointer" }}>
+          +{hidden} 더 보기
+        </button>
+      )}
+      {expanded && values.length > max && (
+        <button type="button" onClick={() => setExpanded(false)} style={{ borderRadius: 4, padding: "2px 7px", background: "#EEF4FD", color: "#185FA5", fontSize: 10, border: "none", cursor: "pointer" }}>
+          접기
+        </button>
+      )}
+    </span>
+  );
+}
 const MAX_PAGE_BUTTONS = 10;
 
 const EVENT_TYPE_STYLE = {
@@ -156,16 +180,21 @@ function AssetViolationChart({ assetScanTrend, securityPostureTimeline, assetHis
 function AssetChangeChart({ assetEvents, securityPostureTimeline, assetHistoryMonthly, assetChanges, assetScanTrend }) {
   const timelineChangeData = buildAssetChangeTrend(securityPostureTimeline);
   if (timelineChangeData.length > 0) {
+    const isTrend = timelineChangeData.length > 1;
     return (
       <div style={styles.card}>
-        <h3 style={styles.cardTitle}>신규 등록 & 변경 & 제거 자산 수 추이</h3>
-        <p style={styles.note}>스캔 메트릭의 new_asset_count, updated_asset_count, changed_asset_count 기준입니다.</p>
+        <h3 style={styles.cardTitle}>{isTrend ? "신규 등록 & 변경 & 제거 자산 수 추이" : "신규 등록 & 변경 & 제거 자산 수 (현재 스캔)"}</h3>
+        <p style={styles.note}>
+          {isTrend
+            ? "스캔별 new_asset_count, updated_asset_count, changed_asset_count 기준입니다."
+            : "현재 응답에 과거 스캔 메트릭이 없어 현재 스캔 값만 표시합니다."}
+        </p>
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={timelineChangeData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid stroke="#eef2f6" />
-            <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+            <XAxis dataKey="_idx" tickFormatter={(index) => timelineChangeData[index]?.label ?? ""} tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-            <Tooltip />
+            <Tooltip labelFormatter={(index) => timelineChangeData[index]?.tooltip_label ?? ""} />
             <Legend verticalAlign="bottom" height={28} wrapperStyle={{ fontSize: 11 }} />
             <Bar dataKey="asset_created" name="신규 등록" fill="#12b76a" />
             <Bar dataKey="asset_updated" name="변경" fill="#2f6fed" />
@@ -308,8 +337,7 @@ function ServerAssetDistribution({ assets, violations, violatedAssetIds }) {
         <thead>
           <tr>
             <HelpHeader label="vm" help="자산이 배치되거나 관측된 서버 VM 이름입니다." />
-            <HelpHeader label="zone" help="서버 VM의 보안 존입니다. 표시 형식은 argos-* 형식으로 정규화됩니다." />
-            <HelpHeader label="자산 수" help="해당 VM/zone에 속한 등록 자산 수입니다. 미등록 후보 자산은 제외합니다." />
+            <HelpHeader label="자산 수" help="해당 VM에 속한 등록 자산 수입니다. 미등록 후보 자산은 제외합니다." />
             <HelpHeader label="Critical/High 영향 자산" help="Critical 또는 High 위반에 1회 이상 연결된 unique 자산 수입니다. 같은 자산에 위반이 여러 개 있어도 1개로 셉니다." />
             <HelpHeader label="Critical/High 위반 링크" help="Critical 또는 High 위반 항목과 자산의 연결 수입니다. 같은 자산에 여러 위반이 있으면 여러 건으로 셉니다." />
             <HelpHeader label="위반 위협 자산" help="전체 위반 항목에 연결된 unique 자산 수입니다. severity와 무관하게 위반 영향 자산을 셉니다." />
@@ -317,9 +345,8 @@ function ServerAssetDistribution({ assets, violations, violatedAssetIds }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={`${row.vm}-${row.zone}`}>
+            <tr key={row.vm}>
               <td style={styles.tdMono}>{row.vm}</td>
-              <td style={styles.td}>{row.zone}</td>
               <td style={styles.td}>
                 <MetricBar value={row.asset_count} max={maxAssets} color="#2f6fed" />
               </td>
@@ -328,7 +355,7 @@ function ServerAssetDistribution({ assets, violations, violatedAssetIds }) {
               <td style={styles.td}>{row.violated_related_assets}</td>
             </tr>
           ))}
-          {!rows.length && <EmptyRow colSpan={6} text="서버별 자산 분포 데이터가 없습니다" />}
+          {!rows.length && <EmptyRow colSpan={5} text="서버별 자산 분포 데이터가 없습니다" />}
         </tbody>
       </table>
     </div>
@@ -363,44 +390,33 @@ function buildServerDistributionRows(assets, violations, violatedAssetIds) {
   const groups = {};
   assets.forEach((asset) => {
     const vm = asset.vm ?? asset.hostname ?? asset.server ?? asset.producer_vm ?? "unknown";
-    const zone = formatServerZone(asset.zone ?? asset.server_zone ?? asset.default_zone) || "-";
-    const key = `${vm}::${zone}`;
-    if (!groups[key]) {
-      groups[key] = {
-        vm,
-        zone,
-        assets: [],
-        criticalHighAssetIds: new Set(),
-        criticalHighViolationLinks: new Set(),
-      };
+    if (!groups[vm]) {
+      groups[vm] = { vm, assets: [], criticalHighAssetIds: new Set(), criticalHighViolationLinks: new Set() };
     }
-    groups[key].assets.push(asset);
+    groups[vm].assets.push(asset);
   });
 
   violations.forEach((violation) => {
     if (!["Critical", "High"].includes(violation.severity)) return;
     const violationKey = violation.result_id ?? violation.violation_id ?? violation.id ?? violation.invariant_id;
-    const relatedAssets = getViolationAssetIds(violation)
+    getViolationAssetIds(violation)
       .map((assetId) => assetById[assetId])
-      .filter(Boolean);
-    relatedAssets.forEach((asset) => {
-      const assetId = asset.asset_id ?? asset.id;
-      const vm = asset.vm ?? asset.hostname ?? asset.server ?? asset.producer_vm ?? "unknown";
-      const zone = formatServerZone(asset.zone ?? asset.server_zone ?? asset.default_zone) || "-";
-      const group = groups[`${vm}::${zone}`];
-      group?.criticalHighAssetIds.add(assetId);
-      group?.criticalHighViolationLinks.add(`${violationKey}::${assetId}`);
-    });
+      .filter(Boolean)
+      .forEach((asset) => {
+        const assetId = asset.asset_id ?? asset.id;
+        const vm = asset.vm ?? asset.hostname ?? asset.server ?? asset.producer_vm ?? "unknown";
+        groups[vm]?.criticalHighAssetIds.add(assetId);
+        groups[vm]?.criticalHighViolationLinks.add(`${violationKey}::${assetId}`);
+      });
   });
 
   return Object.values(groups)
     .map((group) => ({
       vm: group.vm,
-      zone: group.zone,
       asset_count: group.assets.length,
       critical_high_assets: group.criticalHighAssetIds.size,
       critical_high_links: group.criticalHighViolationLinks.size,
-      violated_related_assets: group.assets.filter((asset) => getAssetKeys(asset).some((assetId) => violatedAssetIds.has(assetId))).length,
+      violated_related_assets: group.assets.filter((asset) => getAssetReferenceKeys(asset).some((assetId) => violatedAssetIds.has(assetId))).length,
     }))
     .sort((a, b) => b.violated_related_assets - a.violated_related_assets || b.critical_high_links - a.critical_high_links || b.critical_high_assets - a.critical_high_assets || b.asset_count - a.asset_count || a.vm.localeCompare(b.vm));
 }
@@ -431,10 +447,10 @@ function AssetDetailTable({ assets, services, invariantImpact, violations }) {
               <td style={styles.td}>{asset.asset_type ?? asset.type ?? "-"}</td>
               <td style={styles.td}>{asset.exposure ?? asset.exposure_level ?? asset.internet_exposure ?? "-"}</td>
               <td style={styles.td}>
-                <ChipList values={getMappedValuesByAsset(servicesByAsset, asset)} />
+                <ExpandableChipList values={getMappedValuesByAsset(servicesByAsset, asset)} />
               </td>
               <td style={styles.td}>
-                <ChipList values={getMappedValuesByAsset(impactByAsset, asset)} />
+                <ExpandableChipList values={getMappedValuesByAsset(impactByAsset, asset)} />
               </td>
             </tr>
           ))}
@@ -596,22 +612,35 @@ function buildAssetViolationTrend(assetScanTrend, securityPostureTimeline, curre
 }
 
 function buildAssetChangeTrend(securityPostureTimeline) {
-  return toList(securityPostureTimeline?.points)
+  const rows = toList(securityPostureTimeline?.points)
     .map((point) => {
       const metrics = point.metrics ?? {};
       const changed = firstNumber(metrics.changed_asset_count);
       const created = firstNumber(metrics.new_asset_count, 0);
       const updated = firstNumber(metrics.updated_asset_count, changed);
       const removed = firstNumber(metrics.removed_asset_count, metrics.deleted_asset_count, 0);
+      const scannedAt = point.created_at ?? point.scanned_at;
       return {
-        month: point.date_label ?? String(point.created_at ?? point.scanned_at ?? "").slice(0, 10),
+        scanned_at: scannedAt,
+        scan_id: point.run_id ?? point.scan_id,
+        date_key: String(scannedAt ?? "").slice(0, 10),
         asset_created: created ?? 0,
         asset_updated: updated ?? 0,
         asset_removed: removed ?? 0,
         hasData: changed != null || created != null || updated != null || removed != null,
       };
     })
-    .filter((row) => row.month && row.hasData);
+    .filter((row) => row.date_key && row.hasData);
+  const dayCounts = rows.reduce((counts, row) => {
+    counts[row.date_key] = (counts[row.date_key] ?? 0) + 1;
+    return counts;
+  }, {});
+  return rows.map((row, index) => ({
+    ...row,
+    _idx: index,
+    label: dayCounts[row.date_key] > 1 ? formatShortDateTime(row.scanned_at) : formatShortDate(row.scanned_at),
+    tooltip_label: `${formatDate(row.scanned_at)} · ${row.scan_id ?? "-"}`,
+  }));
 }
 
 function buildImpactByAsset(invariantImpact, violations) {
@@ -639,6 +668,11 @@ function buildImpactByAsset(invariantImpact, violations) {
 
 function buildServicesByAsset(services, assets) {
   const assetById = buildAssetMap(assets);
+  const serviceById = Object.fromEntries(
+    services
+      .map((service) => [service.service_id ?? service.id, service])
+      .filter(([serviceId]) => serviceId)
+  );
   const assetsByVmZone = {};
   assets.forEach((asset) => {
     const key = getVmZoneKey(asset.vm, asset.zone ?? asset.server_zone ?? asset.default_zone);
@@ -657,8 +691,11 @@ function buildServicesByAsset(services, assets) {
 
   assets.forEach((asset) => {
     const assetId = asset.asset_id ?? asset.id;
-    uniqueList(asset.services, asset.service_ids, asset.service_names).forEach((service) => {
-      addService(assetId, getServiceLabel(service));
+    uniqueList(asset.service_ids, asset.all_services, asset.linked_services, asset.observed_services).forEach((serviceId) => {
+      addService(assetId, getServiceLabel(serviceById[serviceId] ?? serviceId));
+    });
+    uniqueList(asset.services, asset.service_names).forEach((service) => {
+      addService(assetId, getServiceLabel(serviceById[service] ?? service));
     });
   });
 
@@ -803,6 +840,20 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("ko-KR");
 }
 
+function formatShortDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toLocaleDateString("ko-KR", { month: "2-digit", day: "2-digit" });
+}
+
+function formatShortDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return date.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 const styles = {
   summaryGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 12 },
   chartGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 12 },
@@ -822,6 +873,7 @@ const styles = {
   metricBarTrack: { position: "relative", display: "block", height: 8, borderRadius: 999, background: "#eef2f6", overflow: "hidden" },
   metricBarFill: { position: "absolute", inset: "0 auto 0 0", borderRadius: 999 },
   pagination: { display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 14, flexWrap: "wrap" },
+  note: { margin: "0 0 12px", fontSize: 11, color: "#b0b7c3", lineHeight: 1.5 },
 };
 
 function pageButton(active, disabled = false) {

@@ -125,7 +125,14 @@ function adaptEvidence(evidence) {
   return {
     ...safe,
     evidence_id: safe.evidence_id ?? safe.id,
-    evidence_type: safe.evidence_type ?? safe.source?.event_type ?? safe.raw_ref?.source_event_type ?? "unknown",
+    evidence_type: first(
+      safe.evidence_type,
+      safe.event_type,
+      safe.observed?.event_type,
+      safe.source?.event_type,
+      safe.raw_ref?.source_event_type,
+      "unknown"
+    ),
     asset_id: first(safe.asset?.asset_id, safe.asset_id, target.asset_id, producer.asset_id, safe.producer_asset_id, safe.target_asset_id),
     producer_asset_id: first(producer.asset_id, safe.producer_asset_id),
     target_asset_id: first(target.asset_id, safe.target_asset_id),
@@ -431,6 +438,8 @@ function adaptAsset(asset) {
     asset_name: first(asset.asset_name, asset.name, asset.asset_id, asset.id),
     asset_type: first(asset.asset_type, asset.type, "unknown"),
     related_invariant_ids: arr(first(asset.related_invariant_ids, asset.violation_ids, asset.invariant_ids)),
+    service_ids: arr(first(asset.service_ids, asset.all_services, asset.linked_services, asset.observed_services)),
+    services: arr(first(asset.services, asset.service_names)),
     evidence_ids: arr(asset.evidence_ids),
   };
 }

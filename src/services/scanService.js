@@ -1,20 +1,22 @@
 import axios from "axios";
-import sampleHealth from "../../purpleteam-gcp-sync-20260511T022501Z/api-samples/api-health.json";
-import sampleScanDetail from "../mock/api-scan-detail-ai-run-20260511-092330.json";
-import sampleScans from "../mock/api-scans.json";
+import sampleHealth from "../../latest_ai_response_ai-run-20260513-131059/api/health.json";
+import sampleScanDetail from "../../latest_ai_response_ai-run-20260513-131059/api/scan_details.json";
+import sampleScans from "../../latest_ai_response_ai-run-20260513-131059/api/scans.json";
 import { adaptScanDetail, adaptScanList } from "./aiPackAdapter";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 export const AI_PACK_API_BASE_URL = import.meta.env.VITE_AI_PACK_API_BASE_URL || "";
 export const ACTIVE_API_BASE_URL = API_BASE_URL || "";
+export const BASELINE_SCAN_ID = "ai-run-20260513-131059";
 
 export const USE_MOCK = !ACTIVE_API_BASE_URL;
 
 const mockScans = adaptScanList(sampleScans);
+const sampleScanId = sampleScanDetail.scan_id ?? sampleScanDetail.run_id ?? BASELINE_SCAN_ID;
 const mockDetails = Object.fromEntries(mockScans.map((scan) => [
   scan.scan_id,
-  scan.scan_id === "ai-run-20260511-092330"
-    ? sampleScanDetail
+  scan.scan_id === sampleScanId
+    ? { ...sampleScanDetail, scan_id: sampleScanId, scanned_at: scan.scanned_at, status: scan.status }
     : { ...sampleScanDetail, scan_id: scan.scan_id, scanned_at: scan.scanned_at, status: scan.status, summary: scan },
 ]));
 
@@ -44,12 +46,13 @@ export async function fetchHealth() {
 }
 
 export async function fetchScanList() {
-  if (USE_MOCK) return mockScans;
+  if (USE_MOCK) return sortScansForDashboard(mockScans);
   const response = await api.get("/scans");
-  return adaptScanList(response.data);
+  return sortScansForDashboard(adaptScanList(response.data));
 }
 
 export async function fetchScanDetails(scanId, scanContext = null) {
+  if (!scanId) throw new Error("scan_id is required to fetch scan details.");
   const scan = scanContext ?? mockScans.find((item) => item.scan_id === scanId);
   if (USE_MOCK) return adaptScanDetail(mockDetails[scanId] ?? sampleScanDetail, { scanId, scan });
   const response = await api.get(`/scans/${scanId}/details`);
@@ -58,14 +61,12 @@ export async function fetchScanDetails(scanId, scanContext = null) {
 
 export async function fetchScanStatus() {
   if (USE_MOCK) return { running: false, status: "completed", scan_id: mockScans[0]?.scan_id ?? null };
-  const response = await api.get("/scans/start/status");
-  return response.data;
+  return { running: false, status: "disabled", message: "Scan start/status API is not available in the current GCP backend." };
 }
 
 export async function startScan() {
   if (USE_MOCK) return { scan_id: null, status: "mock" };
-  const response = await api.post("/scans/start");
-  return response.data;
+  throw new Error("Scan start API is disabled. Use completed ai-run-* snapshots from GET /api/scans.");
 }
 
 export async function savePentestResult(scanId, result) {
@@ -133,4 +134,18 @@ function normalizeTargetAssets(value = []) {
       asset_type: item.asset_type ?? item.type ?? "unknown",
     };
   }).filter((item) => item.asset_id);
+}
+
+export function isCompletedAiRun(scan) {
+  const scanId = String(scan?.scan_id ?? scan?.scanId ?? "");
+  const status = scan?.status ?? scan?.scan_status;
+  return scanId.startsWith("ai-run-") && status === "completed";
+}
+
+export function sortScansForDashboard(scans = []) {
+  return [...scans].sort((a, b) => {
+    const aiRunDelta = Number(isCompletedAiRun(b)) - Number(isCompletedAiRun(a));
+    if (aiRunDelta) return aiRunDelta;
+    return new Date(b.scanned_at ?? b.created_at ?? 0) - new Date(a.scanned_at ?? a.created_at ?? 0);
+  });
 }

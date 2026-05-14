@@ -105,7 +105,7 @@ export default function EvidenceSection({
       )}
 
       <SectionTitle
-        title={mode === "violation" ? "위반 Evidence 상세" : "Evidence 전체 현황"}
+        title={mode === "violation" ? "위반 불변식 상세 분석" : "Evidence 전체 현황"}
         subtitle={mode === "violation"
           ? "선택한 불변식 위반에 매핑된 evidence와 판단 근거를 함께 확인합니다."
           : "수집된 모든 evidence 항목과 위반 매핑을 한 화면에서 확인합니다."}
@@ -122,10 +122,7 @@ export default function EvidenceSection({
               onSelectType={updateType}
             />
             <ViolationAnalysisPanel vm={analysisVm} rows={scopedRows} />
-          <RedTeamSidePanel
-            vm={analysisVm}
-            selectedEvidence={scopedRows.find((row) => (row.evidence_id ?? row.id) === expandedId) ?? scopedRows[0]}
-          />
+            <AIJudgmentFlowPanel vm={analysisVm} rows={scopedRows} />
           </div>
           <EvidenceExplorer
             rows={filteredRows}
@@ -147,24 +144,20 @@ export default function EvidenceSection({
             toggleExpand={toggleExpand}
             showEmptyFields={showEmptyFields}
             setShowEmptyFields={setShowEmptyFields}
+            showRelation
           />
         </>
       ) : (
         <>
+          <div style={styles.statGrid}>
+            <StatCard label="전체 Evidence" value={`${formatNumber(scopedRows.length)}건`} />
+            <StatCard label="Event type" value={`${formatNumber(typeRows.length)}종`} />
+            <StatCard label="위반 연결" value={`${formatNumber(scopedRows.filter((row) => toList(row.related_violation_ids).length).length)}건`} />
+            <StatCard label="수집 VM" value={`${formatNumber(producerOptions.length)}개`} />
+          </div>
           <div style={styles.summaryGrid}>
             <EvidenceEventTypesCard rows={typeRows} compact />
-            <ProducerVmStatsCard
-              rows={producerRows}
-              total={scopedRows.length}
-              eventTypeCount={typeRows.length}
-              violationLinkedCount={scopedRows.filter((row) => toList(row.related_violation_ids).length).length}
-            />
-            <div style={styles.statGrid}>
-              <StatCard label="전체 Evidence" value={`${formatNumber(scopedRows.length)}건`} />
-              <StatCard label="Event type" value={`${formatNumber(typeRows.length)}종`} />
-              <StatCard label="위반 연결" value={`${formatNumber(scopedRows.filter((row) => toList(row.related_violation_ids).length).length)}건`} />
-              <StatCard label="수집 VM" value={`${formatNumber(producerOptions.length)}개`} />
-            </div>
+            <ProducerVmStatsCard rows={producerRows} />
           </div>
           <EvidenceExplorer
             rows={filteredRows}
@@ -221,7 +214,7 @@ function EvidenceEventTypesCard({ rows, compact = false }) {
   );
 }
 
-function ProducerVmStatsCard({ rows, total, eventTypeCount, violationLinkedCount }) {
+function ProducerVmStatsCard({ rows }) {
   const max = Math.max(1, ...rows.map((row) => row.count));
   const topVm = rows[0];
   return (
@@ -230,12 +223,6 @@ function ProducerVmStatsCard({ rows, total, eventTypeCount, violationLinkedCount
         <div>
           <h3 style={styles.evidenceEventTitle}>Producer VM distribution</h3>
           <p style={styles.evidenceEventSubtitle}>evidence를 생성한 VM별 수집량과 편중도를 비교합니다.</p>
-        </div>
-        <div style={styles.producerVmMetrics}>
-          <MiniMetric label="Evidence" value={formatNumber(total)} />
-          <MiniMetric label="VM" value={formatNumber(rows.length)} />
-          <MiniMetric label="Event type" value={formatNumber(eventTypeCount)} />
-          <MiniMetric label="Violation linked" value={formatNumber(violationLinkedCount)} />
         </div>
       </div>
       {topVm && (
@@ -259,15 +246,6 @@ function ProducerVmStatsCard({ rows, total, eventTypeCount, violationLinkedCount
         )}
       </div>
     </div>
-  );
-}
-
-function MiniMetric({ label, value }) {
-  return (
-    <span style={styles.miniMetric}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </span>
   );
 }
 
@@ -321,7 +299,7 @@ function EvidenceTypeFilterPanel({ rows, requiredTypes, activeType, onSelectType
         ))}
       </div>
       <div style={styles.requiredPanel}>
-        <h4 style={styles.requiredTitle}>Required Evidence</h4>
+        <h4 style={styles.requiredTitle}>필요 증거</h4>
         {requiredTypes.length ? requiredTypes.map((type) => (
           <div key={type} style={styles.requiredRow}>
             <span style={styles.requiredBadge}>필요</span>
@@ -338,43 +316,62 @@ function ViolationAnalysisPanel({ vm, rows }) {
   return (
     <section style={styles.analysisPanel}>
       <div style={styles.analysisCardGrid}>
-        <AnalysisSummaryCard title="Expected State" value={vm.expectedText} />
-        <AnalysisSummaryCard title="Observed State" value={vm.summary} tone="warn" />
-        <AnalysisSummaryCard title="Violation Reason" value={formatViolationReason(vm.violationReason)} />
-        <AnalysisSummaryCard title="Violation Reason: reason" value={vm.reason} tone="danger" />
+        <AnalysisSummaryCard title="기대 상태" value={vm.expectedText} />
+        <AnalysisSummaryCard title="위반 사유" value={formatViolationReason(vm.violationReason)} />
+        <AnalysisSummaryCard title="관측 상태" value={vm.summary} tone="warn" />
+        <AnalysisSummaryCard title="레드팀 관점 해석" value={vm.redTeamMeaning} tone="danger" />
       </div>
 
-      <div style={styles.diffCard}>
-        <div style={styles.panelHeader}>
-          <h3 style={styles.panelTitle}>Expected vs Observed</h3>
-          <span style={styles.panelHint}>위반 값만 강하게 표시</span>
+      <JudgmentFactsPanel vm={vm} />
+    </section>
+  );
+}
+
+function JudgmentFactsPanel({ vm }) {
+  return (
+    <div style={styles.judgmentFactsCard}>
+      <div style={styles.panelHeader}>
+        <div>
+          <h3 style={styles.panelTitle}>판정 근거 표</h3>
+          <p style={styles.panelDescription}>
+            AI가 violation.reason에 직접 인용한 핵심 관측값입니다. 연결된 전체 Evidence는 아래 Explorer에서 "연결 Evidence"로 구분됩니다.
+          </p>
         </div>
-        <div style={styles.diffTable}>
-          {vm.diffRows.length ? vm.diffRows.map((row) => (
-            <div key={row.field} style={styles.diffRow}>
-              <span style={styles.diffField}>{formatFieldLabel(row.field)}</span>
-              <span style={styles.diffExpected}>{formatDetailValue(row.expected, row.field)}</span>
-              <span style={styles.diffArrow}>→</span>
-              <span style={row.status === "violation" ? styles.diffObservedViolation : styles.diffObservedNormal}>
-                {formatDetailValue(row.observed, row.field)}
-              </span>
-              <span style={row.status === "violation" ? styles.diffStatusViolation : styles.diffStatusNormal}>
-                {row.status === "violation" ? "VIOLATION" : "OK"}
+        <span style={styles.panelHint}>{formatNumber(vm.observedFacts.length)} facts</span>
+      </div>
+      {vm.expectedFromReason && (
+        <div style={styles.expectedReasonBox}>
+          <span style={styles.basisLabel}>Expected</span>
+          <p style={styles.expectedReasonText}>{vm.expectedFromReason}</p>
+        </div>
+      )}
+      {vm.observedFacts.length ? (
+        <div style={styles.factTable}>
+          <div style={styles.factHeader}>
+            <span>Evidence ID</span>
+            <span>필드 경로</span>
+            <span>관측값</span>
+          </div>
+          {vm.observedFacts.map((fact, index) => (
+            <div key={`${fact.evidenceId}-${fact.field}-${index}`} style={styles.factRow}>
+              <code style={styles.factEvidence}>{fact.evidenceId || "-"}</code>
+              <span style={styles.factField}>{fact.field || "decision_basis"}</span>
+              <span style={isViolationObservedValue(fact.field, fact.value) ? styles.factValueViolation : styles.factValue}>
+                {formatDetailValue(fact.value, fact.field)}
               </span>
             </div>
-          )) : <div style={styles.empty}>비교 가능한 관측 필드가 없습니다.</div>}
+          ))}
         </div>
-      </div>
-
-      <div style={styles.decisionFlow}>
-        <h3 style={styles.panelTitle}>AI Decision Flow</h3>
-        <DecisionStep title="Invariant Definition" value={vm.verificationLogic || vm.title} />
-        <DecisionStep title="Evidence Matched" value={`${formatNumber(rows.length)}건 수집 · ${vm.eventTypes.join(", ") || "event type 정보 없음"}`} />
-        <DecisionStep title="Observed Conflict" value={vm.summary} />
-        <DecisionStep title="Rule Result" value={`${formatViolationReason(vm.violationReason)} / ${vm.severity ?? "미분류"} / ${confidencePercent(vm.confidence)}%`} />
-        <DecisionStep title="RedTeam Interpretation" value={vm.redTeamMeaning} last />
-      </div>
-    </section>
+      ) : (
+        <div style={styles.empty}>violation.reason에서 구조화 가능한 관측값을 찾지 못했습니다.</div>
+      )}
+      {vm.missingRequiredEvidence.length > 0 && (
+        <div style={styles.missingEvidenceBox}>
+          <span style={styles.basisLabel}>Missing required evidence</span>
+          <ChipGroup values={vm.missingRequiredEvidence} max={8} tone="warn" />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -387,7 +384,7 @@ function AnalysisSummaryCard({ title, value, tone = "default" }) {
   return (
     <div style={{ ...styles.analysisSummaryCard, ...toneStyle }}>
       <span style={styles.analysisSummaryLabel}>{title}</span>
-      <strong style={styles.analysisSummaryText}>{value || "-"}</strong>
+      <p style={styles.analysisSummaryText}>{value || "-"}</p>
     </div>
   );
 }
@@ -405,38 +402,17 @@ function DecisionStep({ title, value, last = false }) {
   );
 }
 
-function RedTeamSidePanel({ vm, selectedEvidence }) {
-  const subject = getEvidenceSubject(selectedEvidence) || vm.primaryEntity;
-  const producer = getProducerVm(selectedEvidence) || vm.primaryVm;
-  const groups = toList(selectedEvidence?.observed?.groups);
+function AIJudgmentFlowPanel({ vm, rows }) {
   return (
     <aside style={styles.sidePanel}>
-      <div style={styles.meaningPanel}>
-        <h3 style={styles.panelTitle}>RedTeam Meaning</h3>
-        <p style={styles.meaningText}>{vm.redTeamMeaning}</p>
-      </div>
-      <div style={styles.relatedPanel}>
-        <h3 style={styles.panelTitle}>Related Context</h3>
-        <ContextRow label="Account" value={subject} mono />
-        <ContextRow label="Role" value={selectedEvidence?.observed?.role ?? selectedEvidence?.actor?.role} />
-        <ContextRow label="Groups" value={groups.join(", ")} />
-        <ContextRow label="VM" value={producer} />
-        <ContextRow label="Zone" value={formatServerZone(selectedEvidence?.producer?.zone ?? selectedEvidence?.producer_zone ?? vm.primaryZone)} />
-        <ContextRow label="Raw Source" value={selectedEvidence?.raw_ref?.source ?? selectedEvidence?.observed?.source_ref} mono />
-        <ContextRow label="Related Evidence" value={`${formatNumber(vm.evidenceCount)}건`} />
-        <ContextRow label="Related Invariant" value={vm.invariantId} mono />
+      <div style={styles.decisionFlow}>
+        <h3 style={styles.panelTitle}>AI 판단 흐름</h3>
+        <DecisionStep title="불변식 정의" value={vm.verificationLogic || vm.title} />
+        <DecisionStep title="매칭된 증거" value={`${formatNumber(rows.length)}건 연결 · ${vm.eventTypes.join(", ") || "event type 정보 없음"}`} />
+        <DecisionStep title="관측된 충돌" value={vm.summary} />
+        <DecisionStep title="규칙 판정 결과" value={`${formatViolationReason(vm.violationReason)} / ${vm.severity ?? "미분류"} / ${confidencePercent(vm.confidence)}%`} last />
       </div>
     </aside>
-  );
-}
-
-function ContextRow({ label, value, mono = false }) {
-  if (!value) return null;
-  return (
-    <div style={styles.contextRow}>
-      <span>{label}</span>
-      <strong style={mono ? styles.contextMono : null}>{value}</strong>
-    </div>
   );
 }
 
@@ -460,13 +436,14 @@ function EvidenceExplorer({
   toggleExpand,
   showEmptyFields,
   setShowEmptyFields,
+  showRelation = false,
 }) {
   return (
     <div style={styles.card}>
       <div style={styles.explorerHeader}>
         <div>
-          <h3 style={styles.explorerTitle}>Evidence Explorer</h3>
-          <p style={styles.explorerSubtitle}>판단 근거로 사용된 Evidence를 timeline 또는 table로 추적합니다.</p>
+          <h3 style={styles.explorerTitle}>Evidence 탐색기</h3>
+          <p style={styles.explorerSubtitle}>연결 Evidence와 판정 근거로 직접 인용된 Evidence를 타임라인 또는 표로 추적합니다.</p>
         </div>
         <div style={styles.segmentedControl}>
           <button type="button" style={viewMode === "timeline" ? styles.segmentActive : styles.segmentButton} onClick={() => setViewMode("timeline")}>Timeline</button>
@@ -490,7 +467,7 @@ function EvidenceExplorer({
         </select>
         <label style={styles.toggleLabel}>
           <input type="checkbox" checked={showEmptyFields} onChange={(event) => setShowEmptyFields(event.target.checked)} />
-          Show empty fields
+          빈 필드 표시
         </label>
         <span style={styles.tableSubtitle}>
           {rows.length ? `${(currentPage - 1) * PAGE_SIZE + 1}-${Math.min(currentPage * PAGE_SIZE, rows.length)} / ${rows.length}건` : "0건"}
@@ -500,7 +477,7 @@ function EvidenceExplorer({
       {!rows.length ? (
         <div style={styles.empty}>조건에 맞는 evidence가 없습니다.</div>
       ) : viewMode === "timeline" ? (
-        <EvidenceTimeline rows={pageItems} expandedId={expandedId} toggleExpand={toggleExpand} showEmptyFields={showEmptyFields} />
+        <EvidenceTimeline rows={pageItems} expandedId={expandedId} toggleExpand={toggleExpand} showEmptyFields={showEmptyFields} showRelation={showRelation} />
       ) : (
         <EvidenceTable rows={pageItems} currentPage={currentPage} expandedId={expandedId} toggleExpand={toggleExpand} showEmptyFields={showEmptyFields} />
       )}
@@ -509,7 +486,7 @@ function EvidenceExplorer({
   );
 }
 
-function EvidenceTimeline({ rows, expandedId, toggleExpand, showEmptyFields }) {
+function EvidenceTimeline({ rows, expandedId, toggleExpand, showEmptyFields, showRelation = false }) {
   return (
     <div style={styles.timelineList}>
       {rows.map((ev, index) => {
@@ -523,6 +500,9 @@ function EvidenceTimeline({ rows, expandedId, toggleExpand, showEmptyFields }) {
               <strong style={styles.timelineTitle}>{getEvidenceEventType(ev)} · {getProducerVm(ev) || "-"}</strong>
               <span style={styles.timelineSummary}>{getEvidenceSummary(ev)}</span>
               <span style={styles.timelineMeta}>{getEvidenceSubject(ev) || "subject 미확인"} · {ev.trace_id ?? ev.security_context?.trace_id ?? "trace 없음"}</span>
+              {showRelation && (getEvidenceRelationshipLabels(ev).length
+                ? <span style={styles.timelineRelation}>{getEvidenceRelationshipLabels(ev).join(" · ")}</span>
+                : <span style={styles.timelineRelation}>연결 관계 없음</span>)}
             </button>
             {isExpanded && <div style={styles.timelineExpanded}><EvidenceExpandedDetail ev={ev} showEmptyFields={showEmptyFields} /></div>}
           </div>
@@ -542,12 +522,11 @@ function EvidenceTable({ rows, currentPage, expandedId, toggleExpand, showEmptyF
         <col style={{ width: 178 }} />
         <col style={{ width: 120 }} />
         <col style={{ width: "auto" }} />
-        <col style={{ width: 124 }} />
         <col style={{ width: 38 }} />
       </colgroup>
       <thead>
         <tr>
-          {["Evidence ID", "관측 시각", "Trace ID", "증거 유형", "수집 VM", "핵심 요약", "상태", ""].map((head) => (
+          {["Evidence ID", "관측 시각", "Trace ID", "증거 유형", "수집 VM", "핵심 요약", ""].map((head) => (
             <th key={head} style={styles.th}>{head}</th>
           ))}
         </tr>
@@ -680,8 +659,6 @@ function BasisItem({ label, value, wide = false }) {
 
 function EvidenceRow({ ev, isExpanded, onToggle, showEmptyFields = false }) {
   const producerVm = getProducerVm(ev);
-  const relatedInvariants = toList(ev.related_invariant_ids);
-  const riskFlags = getRiskFlags(ev);
 
   return (
     <>
@@ -692,11 +669,8 @@ function EvidenceRow({ ev, isExpanded, onToggle, showEmptyFields = false }) {
         <td style={styles.td}><EvidenceTypeBadge type={getEvidenceEventType(ev)} /></td>
         <td style={styles.td}>{producerVm ?? "-"}</td>
         <td style={styles.td}>
-          <strong style={styles.rowSubject}>{getEvidenceSubject(ev) || "-"}</strong>
+          {getEvidenceSubject(ev) && <strong style={styles.rowSubject}>{getEvidenceSubject(ev)}</strong>}
           <span style={styles.rowSummary}>{getEvidenceSummary(ev)}</span>
-        </td>
-        <td style={styles.td}>
-          {riskFlags.length ? <ChipGroup values={riskFlags} tone="warn" max={1} /> : <ChipGroup values={relatedInvariants} tone="blue" max={1} />}
         </td>
         <td style={{ ...styles.td, textAlign: "center", color: "#98a2b3", fontSize: 11 }}>
           {isExpanded ? "▲" : "▼"}
@@ -704,7 +678,7 @@ function EvidenceRow({ ev, isExpanded, onToggle, showEmptyFields = false }) {
       </tr>
       {isExpanded && (
         <tr>
-          <td colSpan={8} style={styles.expandedCell}>
+          <td colSpan={7} style={styles.expandedCell}>
             <EvidenceExpandedDetail ev={ev} showEmptyFields={showEmptyFields} />
           </td>
         </tr>
@@ -867,14 +841,14 @@ function buildViolationViewModel(violation, invariant, scopedRows) {
     trace.rule_result?.summary,
     violation.reason
   );
-  const reason = firstNonEmpty(contractView?.reason, violation.reason, trace.rule_result?.reason);
+  const reason = firstNonEmpty(violation.reason, trace.rule_result?.reason, contractView?.reason);
+  const parsedReason = parseJudgmentReason(reason);
   const verificationLogic = firstNonEmpty(
     contractView?.verification_logic,
     trace.invariant?.verification_logic,
     trace.verification_logic,
     invariant?.verification_logic
   );
-  const diffRows = buildFieldDiffRows(violation, trace, scopedRows, contractView);
   const eventTypes = calcEvidenceTypeRows(scopedRows).map((row) => row.key);
   const primary = scopedRows.find((row) => getEvidenceSubject(row) || getProducerVm(row)) ?? {};
   const source = firstNonEmpty(violation.judgment_source, trace.judgment_source, trace.source, "ai1_rule_precheck");
@@ -894,10 +868,12 @@ function buildViolationViewModel(violation, invariant, scopedRows) {
     requiredEvidenceTypes: uniqueList(contractView?.required_evidence, getRequiredEvidenceTypes(violation, trace, scopedRows)),
     matchedEvidenceIds: getMatchedEvidenceIds(violation, trace, scopedRows),
     verificationLogic,
-    expectedText: verificationLogic ?? summarizeExpectedState(trace, invariant),
+    expectedText: parsedReason.expected ?? verificationLogic ?? summarizeExpectedState(trace, invariant),
+    expectedFromReason: parsedReason.expected,
     observedText: judgmentSummary,
+    observedFacts: parsedReason.observedFacts,
+    missingRequiredEvidence: uniqueList(parsedReason.missingRequiredEvidence, getMissingFields(violation, trace)),
     redTeamMeaning: inferRedTeamMeaning(violation, scopedRows),
-    diffRows,
     eventTypes,
     primaryEntity: getEvidenceSubject(primary),
     primaryVm: getProducerVm(primary),
@@ -905,177 +881,57 @@ function buildViolationViewModel(violation, invariant, scopedRows) {
   };
 }
 
-function buildFieldDiffRows(violation, trace, rows, contractView = null) {
-  if (contractView) {
-    return buildContractDiffRows(contractView, rows, violation, trace);
+function parseJudgmentReason(reason) {
+  const text = String(reason ?? "").trim();
+  if (!text) {
+    return { expected: null, observedFacts: [], missingRequiredEvidence: [] };
   }
 
-  const observed = mergeObservedValues(rows);
-  const meaningfulFields = Object.keys(observed).filter((field) => (
-    DEFAULT_EXPECTED_STATE[field] !== undefined ||
-    isViolationObservedValue(field, observed[field])
-  ));
-  if (!meaningfulFields.length) return buildJudgmentDiffRows(violation, trace);
+  const expectedMatch = text.match(/Expected:\s*([\s\S]*?)(?:\.\s*Observed:|Observed:|$)/i);
+  const observedMatch = text.match(/Observed:\s*([\s\S]*)$/i);
+  const expected = expectedMatch?.[1]?.replace(/\.\s*$/, "").trim() || null;
+  const observedText = observedMatch?.[1]?.trim() || "";
+  const missingRequiredEvidence = parseMissingRequiredEvidence(observedText);
+  const observedFacts = observedText
+    .split(";")
+    .map((item) => item.trim().replace(/\.$/, ""))
+    .filter(Boolean)
+    .flatMap(parseObservedFact)
+    .slice(0, 24);
 
-  const fields = uniqueList(
-    getFieldsChecked(violation, trace),
-    Object.keys(DEFAULT_EXPECTED_STATE),
-    meaningfulFields
-  ).filter((field) => observed[field] !== undefined || DEFAULT_EXPECTED_STATE[field] !== undefined);
-
-  const diffRows = fields
-    .map((field) => {
-      const observedValue = observed[field];
-      const expectedValue = DEFAULT_EXPECTED_STATE[field] ?? inferExpectedValue(field);
-      return {
-        field,
-        expected: expectedValue ?? "정책 기준 충족",
-        observed: observedValue ?? "-",
-        status: isViolationObservedValue(field, observedValue) ? "violation" : "ok",
-      };
-    })
-    .filter((row) => row.observed !== "-")
-    .slice(0, 12);
-  return diffRows.length ? diffRows : buildJudgmentDiffRows(violation, trace);
+  return { expected, observedFacts, missingRequiredEvidence };
 }
 
-function buildContractDiffRows(contractView, rows, violation, trace) {
-  const expected = firstNonEmpty(
-    contractView.verification_logic,
-    contractView.reason,
-    trace.invariant?.verification_logic,
-    trace.verification_logic,
-    "contract 기준 기대 상태"
-  );
-  const observed = buildObservedEvidenceStatement(rows) ?? firstNonEmpty(
-    contractView.judgment_summary,
-    contractView.summary,
-    violation.judgment_summary,
-    violation.summary,
-    trace.rule_result?.summary
-  );
-  const rowsOut = [
-    {
-      field: "contract_expected_observed",
-      expected,
-      observed,
-      status: "violation",
-    },
-  ];
-  const reason = firstNonEmpty(contractView.reason, violation.reason, trace.rule_result?.reason);
-  if (reason && reason !== expected) {
-    rowsOut.push({
-      field: "decision_reason",
-      expected: "contract rule satisfied",
-      observed: reason,
-      status: "violation",
-    });
+function parseObservedFact(item) {
+  const missing = item.match(/^missing_required_evidence_types\s*=\s*(.+)$/i);
+  if (missing) return [];
+
+  const match = item.match(/^([A-Za-z0-9_-]+)\s+([^=]+?)\s*=\s*(.+)$/);
+  if (!match) {
+    return [{ evidenceId: "", field: "decision_basis", value: item }];
   }
-  return rowsOut;
+  return [{
+    evidenceId: match[1],
+    field: match[2].trim(),
+    value: parseReasonValue(match[3].trim()),
+  }];
 }
 
-function buildObservedEvidenceStatement(rows) {
-  const statements = rows
-    .flatMap((row) => {
-      const id = row.evidence_id ?? row.id;
-      if (!id) return [];
-      const checks = [
-        ["access.owner_check_performed", firstNonEmpty(row.access?.owner_check_performed, row.control?.owner_check_performed, row.control_owner_check_performed)],
-        ["access.tenant_check_performed", firstNonEmpty(row.access?.tenant_check_performed, row.control?.tenant_check_performed, row.control_tenant_check_performed)],
-        ["access.decision", firstNonEmpty(row.access?.decision, row.access_decision, row.observed?.access_decision)],
-        ["access.endpoint", firstNonEmpty(row.access?.endpoint, row.access_endpoint, row.observed?.endpoint)],
-        ["observed.account_status", row.observed?.account_status],
-        ["observed.credential_status", row.observed?.credential_status],
-        ["observed.active_session_count", row.observed?.active_session_count],
-      ].filter(([, value]) => value !== null && value !== undefined && value !== "");
-      if (checks.length) {
-        return checks.slice(0, 3).map(([field, value]) => `${id} ${field}=${formatDetailValue(value)}`);
-      }
-      const summary = row.observed?.summary;
-      return summary && !isGenericEvidenceSummary(summary) ? [`${id} ${summary}`] : [];
-    })
-    .slice(0, 10);
-  return statements.length ? statements.join("; ") : null;
+function parseMissingRequiredEvidence(text) {
+  const match = String(text ?? "").match(/missing_required_evidence_types\s*=\s*\[([^\]]*)\]/i);
+  if (!match) return [];
+  return match[1]
+    .split(",")
+    .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
 }
 
-function isGenericEvidenceSummary(value) {
-  return /^[a-z0-9_]+ \| [a-z0-9-]+(?: \| .*)?$/i.test(String(value ?? ""));
-}
-
-const DEFAULT_EXPECTED_STATE = {
-  employment_status: "active 대상만 활성 접근 허용",
-  account_status: "disabled",
-  active_session_count: 0,
-  credential_status: "revoked",
-  api_key_status: "revoked/disabled",
-  service_token_status: "revoked",
-  production_customer_data_access_allowed: false,
-  plaintext_secret_access_allowed: false,
-  had_jwt_key_access: false,
-  validate_issuer: true,
-  validate_audience: true,
-  validate_iat: true,
-  validate_kid_active: true,
-  validate_jti_registry: true,
-  validate_revocation: true,
-  revocation_list_enabled: true,
-};
-
-function mergeObservedValues(rows) {
-  const values = {};
-  rows.forEach((row) => {
-    Object.entries(row.observed ?? {}).forEach(([key, value]) => {
-      if (value === null || value === undefined || value === "" || OBSERVED_EXCLUDED_KEYS.has(key)) return;
-      const current = toList(values[key]);
-      const next = toList(value);
-      values[key] = uniqueList(current, next);
-    });
-  });
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, value.length === 1 ? value[0] : value])
-  );
-}
-
-function buildJudgmentDiffRows(violation, trace) {
-  const expected = firstNonEmpty(
-    trace.invariant?.verification_logic,
-    trace.verification_logic,
-    "불변식이 요구하는 안전 상태"
-  );
-  const observed = firstNonEmpty(
-    violation.judgment_summary,
-    violation.summary,
-    trace.judgment_summary,
-    trace.rule_result?.summary,
-    "AI 판단 요약 없음"
-  );
-  const reason = firstNonEmpty(
-    violation.reason,
-    trace.rule_result?.reason,
-    trace.decision_basis,
-    trace.rule_result?.decision_basis
-  );
-  return [
-    {
-      field: "judgment_summary",
-      expected,
-      observed,
-      status: "violation",
-    },
-    reason && {
-      field: "decision_reason",
-      expected: "정책 기준 충족",
-      observed: reason,
-      status: "violation",
-    },
-  ].filter(Boolean);
-}
-
-function inferExpectedValue(field) {
-  if (field.includes("status")) return "policy-compliant";
-  if (field.includes("session_count")) return 0;
-  if (field.includes("access")) return "least privilege";
-  return null;
+function parseReasonValue(value) {
+  const normalized = String(value ?? "").trim().replace(/\.$/, "");
+  if (/^(true|false)$/i.test(normalized)) return normalized.toLowerCase() === "true";
+  if (/^(none|null)$/i.test(normalized)) return "None";
+  if (/^-?\d+(\.\d+)?$/.test(normalized)) return Number(normalized);
+  return normalized.replace(/^['"]|['"]$/g, "");
 }
 
 function summarizeExpectedState(trace, invariant) {
@@ -1110,7 +966,9 @@ function getEvidenceSubject(event) {
     event?.actor?.actor_id,
     event?.actor?.subject_id,
     event?.subject_id,
-    event?.account_id
+    event?.account_id,
+    event?.producer?.component_id,
+    event?.producer?.vm
   );
 }
 
@@ -1122,6 +980,18 @@ function getEvidenceSummary(event) {
   if (subject && flags.length) return `${subject} · ${flags.join(", ")}`;
   if (subject) return `${subject} 관련 관측`;
   return event?.raw_ref?.source ?? event?.observed?.source_ref ?? "Evidence summary 없음";
+}
+
+function getEvidenceRelationshipLabels(event) {
+  const labels = [];
+  const relatedViolationIds = toList(event?.related_violation_ids);
+  const metadataInvariantIds = toList(event?.observed?.related_invariant_ids);
+  if (event?.current_violation_cited) labels.push("판정 근거 인용");
+  if (event?.current_violation_linked) labels.push("연결 Evidence");
+  if (event?.current_violation_metadata_ref || relatedViolationIds.some((id) => metadataInvariantIds.includes(id))) labels.push("메타 참조");
+  if (relatedViolationIds.length > 1) labels.push(`공유 ${relatedViolationIds.length}건`);
+  if (event?.evidence_preview_missing) labels.push("preview 없음");
+  return labels;
 }
 
 function getRiskFlags(event) {
@@ -1144,6 +1014,7 @@ function isViolationObservedValue(field, value) {
   if (field === "active_session_count") return values.some((item) => Number(item) > 0);
   if (field === "employment_status") return values.some((item) => item && item !== "active");
   if (field === "had_jwt_key_access") return values.includes("true");
+  if (/check|validated|validation|performed|allowed|enabled|used/i.test(field)) return values.some((item) => ["false", "none", "null"].includes(item));
   if (field.includes("status")) return values.some(isActiveLike);
   if (field.includes("groups") || field.includes("privilege")) return values.some((item) => /admin|key|priv/i.test(item));
   return false;
@@ -1189,7 +1060,7 @@ function buildEvidenceRows(evidenceEvents, violations, invariantById) {
     });
     toList(violation.evidence_ids).forEach((evidenceId) => {
       const row = rowsById.get(evidenceId);
-      const fallback = row ?? { evidence_id: evidenceId, evidence_type: "unknown" };
+      const fallback = row ?? { evidence_id: evidenceId, evidence_type: "unknown", evidence_preview_missing: true };
       addEvidenceRow(fallback, rowsById, anonymousRows, violation, relatedInvariants);
     });
   });
@@ -1213,14 +1084,25 @@ function buildEvidenceRows(evidenceEvents, violations, invariantById) {
 function filterRowsForViolation(rows, violation) {
   const invariantId = violation?.invariant_id ?? violation?.id;
   const evidenceIds = new Set(toList(violation?.evidence_ids));
-  return rows.filter((row) => {
-    const rowId = row.evidence_id ?? row.id;
-    const relatedViolations = toList(row.related_violation_ids);
-    return (
-      (rowId && evidenceIds.has(rowId)) ||
-      (invariantId && relatedViolations.includes(invariantId))
-    );
-  });
+  const citedEvidenceIds = new Set(parseJudgmentReason(violation?.reason).observedFacts.map((fact) => fact.evidenceId).filter(Boolean));
+  return rows
+    .filter((row) => {
+      const rowId = row.evidence_id ?? row.id;
+      const relatedViolations = toList(row.related_violation_ids);
+      return (
+        (rowId && evidenceIds.has(rowId)) ||
+        (invariantId && relatedViolations.includes(invariantId))
+      );
+    })
+    .map((row) => {
+      const rowId = row.evidence_id ?? row.id;
+      return {
+        ...row,
+        current_violation_linked: Boolean(rowId && evidenceIds.has(rowId)),
+        current_violation_cited: Boolean(rowId && citedEvidenceIds.has(rowId)),
+        current_violation_metadata_ref: Boolean(invariantId && toList(row.observed?.related_invariant_ids).includes(invariantId)),
+      };
+    });
 }
 
 function getViolationTrace(violation) {
@@ -1374,8 +1256,25 @@ function getProducerVm(event) {
   return event?.producer_vm ?? event?.producer?.vm ?? event?.producer_asset_id ?? "";
 }
 
+function parseEvidenceSummaryObservation(ev) {
+  const summary = ev?.observed?.summary;
+  if (!summary || typeof summary !== "string") return null;
+  const parts = summary.split("|").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const [eventType, , target, decision] = parts;
+  const value = cleanObject({
+    event_type: eventType,
+    target,
+    access_decision: decision,
+  });
+
+  return Object.keys(value).length >= 2 ? value : null;
+}
+
 function buildEvidenceDetailSections(ev) {
   const observed = filterObserved(ev.observed) ?? {};
+  const summaryObservation = parseEvidenceSummaryObservation(ev);
   const type = getEvidenceEventType(ev);
   const prioritySections = type === "account_state_event"
     ? [
@@ -1410,6 +1309,12 @@ function buildEvidenceDetailSections(ev) {
     : [];
 
   const genericSections = [
+    {
+      key: "summary_observation",
+      label: "요약에서 추출한 관측값",
+      description: "observed.summary에 압축된 이벤트 유형, 영역, 대상 endpoint, access decision을 구조화해서 표시합니다.",
+      value: summaryObservation,
+    },
     {
       key: "producer",
       label: "수집 주체",
@@ -1552,9 +1457,9 @@ function formatTestable(value) {
 
 function formatViolationReason(value) {
   const labels = {
-    clear_violation: "명백한 위반",
-    partial_satisfaction: "부분 충족",
-    evidence_missing: "증거 불충분",
+    clear_violation: "구조화된 조건값 위반",
+    partial_satisfaction: "부분 충족/부분위반",
+    evidence_missing: "증거 부족",
     control_not_observed: "통제 미관측",
   };
   return labels[value] ?? value ?? "-";
@@ -1619,7 +1524,7 @@ function formatDetailValue(value, key = "") {
     if (zones.length) return zones.join(", ");
   }
   if (Array.isArray(value)) return value.join(", ");
-  if (typeof value === "boolean") return value ? "예" : "아니오";
+  if (typeof value === "boolean") return value ? "true" : "false";
   if (value && typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -1726,17 +1631,19 @@ const styles = {
   analysisSummaryWarn: { background: "#FFF8ED", borderColor: "#FED7AA" },
   analysisSummaryDanger: { background: "#FEF7F7", borderColor: "#FECACA" },
   analysisSummaryLabel: { display: "block", marginBottom: 7, color: "#667085", fontSize: 10, fontWeight: 900, textTransform: "uppercase" },
-  analysisSummaryText: { display: "block", color: "#111827", fontSize: 12, lineHeight: 1.55, fontWeight: 800 },
-  diffCard: { background: "#fff", border: "1px solid #E4E7EC", borderRadius: 8, padding: 14 },
-  diffTable: { display: "grid", borderTop: "1px solid #EEF2F6" },
-  diffRow: { display: "grid", gridTemplateColumns: "minmax(130px, 0.9fr) minmax(130px, 1fr) 20px minmax(120px, 1fr) 86px", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F2F4F7", fontSize: 11 },
-  diffField: { color: "#475569", fontWeight: 900 },
-  diffExpected: { color: "#344054", background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 5, padding: "4px 7px", minWidth: 0, wordBreak: "break-word" },
-  diffArrow: { color: "#98A2B3", textAlign: "center" },
-  diffObservedViolation: { color: "#B42318", background: "#FEF1F1", border: "1px solid #FECACA", borderRadius: 5, padding: "4px 7px", fontWeight: 900, minWidth: 0, wordBreak: "break-word" },
-  diffObservedNormal: { color: "#116149", background: "#E7F6EF", border: "1px solid #BFE6D1", borderRadius: 5, padding: "4px 7px", fontWeight: 800, minWidth: 0, wordBreak: "break-word" },
-  diffStatusViolation: { color: "#B42318", fontSize: 10, fontWeight: 900 },
-  diffStatusNormal: { color: "#116149", fontSize: 10, fontWeight: 900 },
+  analysisSummaryText: { margin: 0, display: "block", color: "#111827", fontSize: 12, lineHeight: 1.55, fontWeight: 500 },
+  panelDescription: { margin: "4px 0 0", color: "#667085", fontSize: 11, lineHeight: 1.45 },
+  judgmentFactsCard: { background: "#fff", border: "1px solid #E4E7EC", borderRadius: 8, padding: 14 },
+  expectedReasonBox: { background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 6, padding: "9px 10px", marginBottom: 10 },
+  expectedReasonText: { margin: "4px 0 0", color: "#111827", fontSize: 12, lineHeight: 1.55, fontWeight: 500 },
+  factTable: { display: "grid", border: "1px solid #EEF2F6", borderRadius: 6, overflow: "hidden" },
+  factHeader: { display: "grid", gridTemplateColumns: "138px minmax(160px, 1fr) minmax(110px, 0.65fr)", gap: 8, background: "#F8FAFC", color: "#667085", fontSize: 10, fontWeight: 900, padding: "8px 10px", textTransform: "uppercase" },
+  factRow: { display: "grid", gridTemplateColumns: "138px minmax(160px, 1fr) minmax(110px, 0.65fr)", gap: 8, alignItems: "center", padding: "8px 10px", borderTop: "1px solid #F2F4F7", fontSize: 11 },
+  factEvidence: { color: "#185FA5", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  factField: { color: "#475569", fontFamily: "monospace", wordBreak: "break-word" },
+  factValue: { color: "#111827", background: "#F8FAFC", border: "1px solid #EEF2F6", borderRadius: 5, padding: "3px 7px", wordBreak: "break-word" },
+  factValueViolation: { color: "#B42318", background: "#FEF1F1", border: "1px solid #FECACA", borderRadius: 5, padding: "3px 7px", wordBreak: "break-word" },
+  missingEvidenceBox: { marginTop: 10, paddingTop: 10, borderTop: "1px solid #EEF2F6" },
   decisionFlow: { background: "#fff", border: "1px solid #DCE7F3", borderRadius: 8, padding: 14 },
   decisionStep: { position: "relative", display: "grid", gridTemplateColumns: "18px minmax(0, 1fr)", gap: 8, paddingBottom: 10 },
   decisionDot: { width: 9, height: 9, borderRadius: 999, background: "#185FA5", marginTop: 4, justifySelf: "center", zIndex: 1 },
@@ -1766,6 +1673,7 @@ const styles = {
   timelineTitle: { color: "#111827", fontSize: 12 },
   timelineSummary: { color: "#344054", fontSize: 12, lineHeight: 1.5 },
   timelineMeta: { color: "#667085", fontSize: 11, fontFamily: "monospace" },
+  timelineRelation: { color: "#185FA5", fontSize: 11, fontWeight: 400 },
   timelineExpanded: { gridColumn: "2", padding: "10px 0 14px 6px" },
   violationOverviewGrid: { display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(0, 2fr)", gap: 14, alignItems: "start", marginBottom: 16 },
   contextPanel: { background: "#fff", border: "1px solid #DCE7F3", borderRadius: 8, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.04)" },
@@ -1794,10 +1702,10 @@ const styles = {
   traceTitle: { margin: 0, fontSize: 13, fontWeight: 800, color: "#111827" },
   traceHint: { color: "#667085", fontSize: 11 },
   summaryGrid: { display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(0, 2fr)", gap: 14, alignItems: "stretch", marginBottom: 16 },
-  statGrid: { display: "grid", gridTemplateColumns: "repeat(4, minmax(120px, 1fr))", gap: 10, gridColumn: "1 / -1" },
-  statCard: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 10, padding: "11px 14px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4 },
-  statLabel: { fontSize: 10, color: "#73726c", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" },
-  statValue: { fontSize: 17, fontWeight: 800, color: "#111827" },
+  statGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 },
+  statCard: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 8, padding: "18px 20px", minHeight: 92, display: "flex", flexDirection: "column", justifyContent: "center" },
+  statLabel: { display: "block", fontSize: 12, color: "#73726c", marginBottom: 12 },
+  statValue: { display: "block", fontSize: 28, color: "#173b70", letterSpacing: 0, fontWeight: 700 },
   evidenceEventCard: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 8, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.04)" },
   evidenceEventCardCompact: { alignSelf: "stretch" },
   evidenceEventHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, paddingBottom: 14, borderBottom: "0.5px solid rgba(0,0,0,0.08)", marginBottom: 14 },
@@ -1813,9 +1721,7 @@ const styles = {
   evidenceEventValue: { color: "#111827", fontSize: 12, textAlign: "left", fontWeight: 800 },
   evidenceEventEmpty: { padding: "18px 0", color: "#98a2b3", fontSize: 12 },
   producerVmCard: { background: "#fff", border: "0.5px solid rgba(0,0,0,0.1)", borderRadius: 8, padding: 16, boxShadow: "0 1px 2px rgba(16,24,40,0.04)" },
-  producerVmHeader: { display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(280px, 1.15fr)", gap: 14, alignItems: "start", paddingBottom: 14, borderBottom: "0.5px solid rgba(0,0,0,0.08)", marginBottom: 12 },
-  producerVmMetrics: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 },
-  miniMetric: { background: "#F8FAFC", border: "1px solid #E4E7EC", borderRadius: 6, padding: "7px 8px", display: "grid", gap: 3, color: "#667085", fontSize: 10, fontWeight: 800, textTransform: "uppercase" },
+  producerVmHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, paddingBottom: 14, borderBottom: "0.5px solid rgba(0,0,0,0.08)", marginBottom: 12 },
   producerVmInsight: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "baseline", background: "#F7FBFF", border: "1px solid #DCE7F3", borderRadius: 6, padding: "8px 10px", marginBottom: 12, color: "#344054", fontSize: 12 },
   producerVmList: { display: "grid", gap: 8 },
   producerVmRow: { display: "grid", gridTemplateColumns: "minmax(120px, 170px) minmax(0, 1fr) 58px 48px", gap: 10, alignItems: "center", fontSize: 12 },
@@ -1839,7 +1745,7 @@ const styles = {
   rowSummary: { display: "block", color: "#475569", fontSize: 11, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   typeBadge: { display: "inline-flex", alignItems: "center", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" },
   chipWrap: { display: "flex", flexWrap: "wrap", gap: 4 },
-  chip: { display: "inline-flex", alignItems: "center", padding: "1px 6px", borderRadius: 999, border: "0.5px solid", fontSize: 10, fontWeight: 600, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  chip: { display: "inline-flex", alignItems: "center", padding: "1px 6px", borderRadius: 999, border: "0.5px solid", fontSize: 10, fontWeight: 400, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   emptyInline: { color: "#b0aea8", fontSize: 11 },
   expandedCell: { padding: "12px 16px", background: "#F8FAFC", borderBottom: "0.5px solid rgba(0,0,0,0.08)" },
   expandedGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "10px 12px" },

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { createInvariant } from "../services/scanService";
 import { EmptyRow, SectionTitle } from "./common";
 
@@ -26,10 +26,14 @@ const VALUE_LABELS = {
 
 export default function InvariantSection({ invariants = [], readiness = [] }) {
   const [localInvariants, setLocalInvariants] = useState([]);
+  const [deletedIds, setDeletedIds] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [form, setForm] = useState({ invariant_id: "", title: "", source: "custom", state: "draft", approval_status: "draft" });
   const [activeFilter, setActiveFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const displayedInvariants = useMemo(() => mergeByInvariantId(invariants, localInvariants), [invariants, localInvariants]);
+  const displayedInvariants = useMemo(() => (
+    mergeByInvariantId(invariants, localInvariants).filter((item) => !deletedIds.includes(invariantId(item)))
+  ), [deletedIds, invariants, localInvariants]);
   const filteredInvariants = useMemo(
     () => displayedInvariants.filter((item) => sourceMatches(item.source ?? item.invariant_source, activeFilter)),
     [displayedInvariants, activeFilter]
@@ -42,7 +46,38 @@ export default function InvariantSection({ invariants = [], readiness = [] }) {
     if (!form.invariant_id || !form.title) return;
     await createInvariant(form);
     setLocalInvariants((items) => upsert(items, form));
+    setDeletedIds((ids) => ids.filter((id) => id !== form.invariant_id));
     setForm({ invariant_id: "", title: "", source: "custom", state: "draft", approval_status: "draft" });
+  };
+
+  const startEdit = (item) => {
+    setForm({
+      invariant_id: invariantId(item),
+      title: displayTitle(item),
+      source: item.source ?? item.invariant_source ?? "custom",
+      state: item.state ?? (item.active === false ? "disabled" : "active"),
+      approval_status: item.approval_status ?? item.catalog_status ?? "approved",
+    });
+  };
+
+  const deleteSelected = () => {
+    if (!selectedIds.length) return;
+    setDeletedIds((ids) => [...new Set([...ids, ...selectedIds])]);
+    setLocalInvariants((items) => items.filter((item) => !selectedIds.includes(invariantId(item))));
+    setSelectedIds([]);
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+  };
+
+  const pageIds = pageItems.map(invariantId).filter(Boolean);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+  const togglePageSelected = () => {
+    setSelectedIds((ids) => {
+      if (allPageSelected) return ids.filter((id) => !pageIds.includes(id));
+      return [...new Set([...ids, ...pageIds])];
+    });
   };
 
   return (
@@ -57,7 +92,9 @@ export default function InvariantSection({ invariants = [], readiness = [] }) {
           <Select value={form.state} values={STATES} onChange={(state) => setForm({ ...form, state })} />
           <Select value={form.approval_status} values={APPROVAL} onChange={(approval_status) => setForm({ ...form, approval_status })} />
           <button style={styles.primaryButton} onClick={save}>저장</button>
+          <button style={styles.secondaryButton} onClick={() => setForm({ invariant_id: "", title: "", source: "custom", state: "draft", approval_status: "draft" })}>초기화</button>
         </div>
+        <p style={styles.formHint}>현재 API 문서에는 삭제/수정 전용 endpoint가 없어 화면 목록 기준으로 반영합니다. 저장은 기존 불변식 생성 API를 사용합니다.</p>
       </div>
       <div style={styles.card}>
         <div style={styles.tableHeader}>
@@ -86,24 +123,33 @@ export default function InvariantSection({ invariants = [], readiness = [] }) {
         </div>
         <table style={styles.table}>
           <thead>
-            <tr>{["불변식 ID", "내용", "유형", "활성 여부", "승인 상태", "Readiness"].map((head) => <th key={head} style={styles.th}>{head}</th>)}</tr>
+            <tr>
+              {["불변식 ID", "분류", "category", "불변식 내용", "위험도", "검증 상태", "사유", "활성 여부", "승인 상태", "Readiness", "수정"].map((head) => <th key={head} style={styles.th}>{head}</th>)}
+            </tr>
           </thead>
           <tbody>
             {pageItems.map((item) => {
-              const id = item.invariant_id ?? item.id;
+              const id = invariantId(item);
               const ready = readiness.find((row) => row.invariant_id === id);
               return (
                 <tr key={id}>
                   <td style={styles.tdMono}>{id}</td>
+                  <td style={styles.td}>{formatSource(item.source ?? item.invariant_source)}</td>
+                  <td style={styles.td}>{formatCategory(item)}</td>
                   <td style={styles.td}>{displayTitle(item)}</td>
-                  <td style={styles.td}>{labelFor(item.source ?? item.invariant_source)}</td>
-                  <td style={styles.td}>{labelFor(item.state ?? (item.active === false ? "disabled" : "active"))}</td>
-                  <td style={styles.td}>{labelFor(item.approval_status ?? item.catalog_status ?? "approved")}</td>
-                  <td style={styles.td}>{ready?.status ?? ready?.reason ?? "-"}</td>
+                  <td style={styles.td}>{formatRisk(item)}</td>
+                  <td style={styles.td}>{formatEvaluationStatus(item)}</td>
+                  <td style={styles.td}>{formatReason(item)}</td>
+                  <td style={styles.td}>{formatActiveState(item)}</td>
+                  <td style={styles.td}>{formatApprovalStatus(item)}</td>
+                  <td style={styles.td}>{formatReadiness(ready)}</td>
+                  <td style={styles.td}>
+                    <button type="button" style={styles.linkButton} onClick={() => startEdit(item)}>수정</button>
+                  </td>
                 </tr>
               );
             })}
-            {!filteredInvariants.length && <EmptyRow colSpan={6} text="No invariant catalog returned." />}
+            {!filteredInvariants.length && <EmptyRow colSpan={11} text="No invariant catalog returned." />}
           </tbody>
         </table>
         <Pagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />
@@ -148,13 +194,69 @@ function getVisiblePages(page, totalPages) {
 }
 
 function displayTitle(item) {
-  const id = item.invariant_id ?? item.id;
+  const id = invariantId(item);
   const candidates = [item.title, item.name, item.catalog_title, item.description];
   return candidates.find((v) => v && v !== id) ?? "DB 항목이 비어있습니다.";
 }
 
+function invariantId(item = {}) {
+  return item.invariant_id ?? item.id;
+}
+
 function labelFor(value) {
   return VALUE_LABELS[value] ?? value ?? "-";
+}
+
+function formatSource(value) {
+  if (value === "fixed") return "고정";
+  if (["custom", "variable"].includes(value)) return "가변";
+  return value ?? "-";
+}
+
+function formatCategory(item) {
+  return item.category ?? item.type ?? item.default_zone ?? "-";
+}
+
+function formatRisk(item) {
+  return item.severity ?? item.risk_level ?? item.risk ?? "-";
+}
+
+function formatEvaluationStatus(item) {
+  const value = item.evaluation_status ?? item.status ?? item.last_result_status;
+  if (value === "violated") return "위반";
+  if (value === "applied") return "적용";
+  if (["not_testable", "unknown", "unverified", "미점검"].includes(value)) return "검증 불가";
+  return value ?? "-";
+}
+
+function formatReason(item) {
+  const value = item.violation_reason ?? item.last_violation_reason ?? item.reason ?? item.collector_gap_reason;
+  const labels = {
+    clear_violation: "조건값 위반",
+    partial_satisfaction: "부분 충족",
+    evidence_missing: "증거 부족",
+    control_not_observed: "통제 미관측",
+  };
+  return labels[value] ?? value ?? "-";
+}
+
+function formatActiveState(item) {
+  const state = item.state ?? (item.active === false ? "disabled" : "active");
+  if (state === "active") return "활성";
+  if (state === "disabled") return "비활성";
+  if (state === "draft") return "초안";
+  return state ?? "-";
+}
+
+function formatApprovalStatus(item) {
+  const value = item.approval_status ?? item.catalog_status ?? item.approval_state;
+  if (value === "approved") return "승인 완료";
+  if (value === "draft") return "승인 대기";
+  return value ?? "-";
+}
+
+function formatReadiness(ready) {
+  return ready?.status ?? ready?.reason ?? "-";
 }
 
 function sourceMatches(source, filter) {
@@ -164,8 +266,8 @@ function sourceMatches(source, filter) {
 }
 
 function upsert(items, item) {
-  const id = item.invariant_id ?? item.id;
-  const index = items.findIndex((candidate) => (candidate.invariant_id ?? candidate.id) === id);
+  const id = invariantId(item);
+  const index = items.findIndex((candidate) => invariantId(candidate) === id);
   if (index < 0) return [...items, item];
   const next = [...items];
   next[index] = item;
@@ -173,24 +275,32 @@ function upsert(items, item) {
 }
 
 function mergeByInvariantId(remote, local) {
-  const map = new Map(remote.map((item) => [item.invariant_id ?? item.id, item]));
-  local.forEach((item) => map.set(item.invariant_id ?? item.id, item));
+  const map = new Map(remote.map((item) => [invariantId(item), item]));
+  local.forEach((item) => map.set(invariantId(item), item));
   return [...map.values()];
 }
 
 const styles = {
   card: { background: "#fff", border: "1px solid #e4e7ec", borderRadius: 8, padding: 16, marginBottom: 12 },
   cardTitle: { margin: "0 0 12px", fontSize: 14 },
-  formGrid: { display: "grid", gridTemplateColumns: "1fr 2fr repeat(4, minmax(120px, auto))", gap: 8 },
+  formGrid: { display: "grid", gridTemplateColumns: "1fr 2fr repeat(3, minmax(120px, auto)) auto auto", gap: 8 },
   input: { border: "1px solid #d0d5dd", borderRadius: 7, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", minWidth: 0 },
   primaryButton: { border: "none", background: "#2f6fed", color: "#fff", borderRadius: 7, padding: "8px 12px", fontWeight: 700, cursor: "pointer" },
+  secondaryButton: { border: "1px solid #d0d5dd", background: "#fff", color: "#344054", borderRadius: 7, padding: "8px 12px", fontWeight: 700, cursor: "pointer" },
+  dangerButton: { border: "1px solid #FECACA", background: "#FEF1F1", color: "#B42318", borderRadius: 7, padding: "7px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer" },
+  formHint: { margin: "10px 0 0", color: "#667085", fontSize: 11, lineHeight: 1.5 },
   tableHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 },
+  actionRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 },
+  selectionSummary: { color: "#667085", fontSize: 11 },
   filterRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   pageSummary: { fontSize: 11, color: "#667085", whiteSpace: "nowrap" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
   th: { textAlign: "left", padding: "10px 12px", color: "#667085", borderBottom: "1px solid #e4e7ec" },
+  thCheck: { width: 36, textAlign: "center", padding: "10px 8px", color: "#667085", borderBottom: "1px solid #e4e7ec" },
   td: { padding: "10px 12px", borderBottom: "1px solid #eef2f6", color: "#344054" },
+  tdCheck: { width: 36, textAlign: "center", padding: "10px 8px", borderBottom: "1px solid #eef2f6" },
   tdMono: { padding: "10px 12px", borderBottom: "1px solid #eef2f6", color: "#173b70", fontFamily: "monospace", fontWeight: 700 },
+  linkButton: { border: 0, background: "transparent", color: "#185FA5", fontSize: 12, fontWeight: 800, cursor: "pointer", padding: 0 },
   pagination: { display: "flex", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 14, flexWrap: "wrap" },
 };
 
@@ -241,3 +351,4 @@ function pageButton(active, disabled = false) {
     cursor: disabled ? "not-allowed" : "pointer",
   };
 }
+

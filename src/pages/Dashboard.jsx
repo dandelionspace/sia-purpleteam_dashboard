@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import AssetSection from "../components/AssetSection";
 import AttackSection from "../components/AttackSection";
@@ -10,17 +10,17 @@ import KpiCards from "../components/KpiCards";
 import PentestSection from "../components/PentestSection";
 import ScanSection from "../components/ScanSection";
 import ViolationSection from "../components/ViolationSection";
-import { ACTIVE_API_BASE_URL, AI_PACK_API_BASE_URL, fetchHealth, fetchScanDetails, fetchScanList, USE_MOCK } from "../services/scanService";
+import { ACTIVE_API_BASE_URL, AI_PACK_API_BASE_URL, fetchHealth, fetchScanDetails, fetchScanList, isCompletedAiRun, USE_MOCK } from "../services/scanService";
 import { sourceMatches } from "../utils/invariantSource";
 
 const NAV_ITEMS = [
+  { id: "overview", icon: "OV", label: "보안 현황", sections: ["kpi", "violation", "attack"] },
+  { id: "invariants", icon: "IV", label: "불변식 상세", sections: ["invariant"] },
   { id: "evidence", icon: "EV", label: "Evidence", sections: ["evidence"] },
-  { id: "overview", icon: "⚠️", label: "불변식 위반 현황", sections: ["kpi", "violation", "attack"] },
-  { id: "assets", icon: "🧾", label: "자산 관리", sections: ["asset"] },
-  { id: "invariants", icon: "📝", label: "불변식 상세", sections: ["invariant"] },
-  { id: "pentest", icon: "🔓", label: "모의침투 결과", sections: ["pentest"] },
-  { id: "defense", icon: "🛡️", label: "방어 및 보안 수준", sections: ["defense"] },
-  { id: "scans", icon: "🔍", label: "점검 관리", sections: ["scan"] },
+  { id: "pentest", icon: "PT", label: "모의 침투 결과", sections: ["pentest"] },
+  { id: "assets", icon: "AS", label: "자산 관리", sections: ["asset"] },
+  { id: "defense", icon: "DF", label: "방어 및 보안 조치", sections: ["defense"] },
+  { id: "scans", icon: "SC", label: "점검 관리", sections: ["scan"] },
 ];
 
 const FILTER_TABS = [
@@ -42,7 +42,11 @@ export default function Dashboard() {
   const scanList = useMemo(() => scanListQuery.data ?? [], [scanListQuery.data]);
   const latestScanId = useMemo(() => {
     if (!scanList.length) return null;
-    const sorted = [...scanList].sort((a, b) => new Date(b.scanned_at ?? 0) - new Date(a.scanned_at ?? 0));
+    const sorted = [...scanList].sort((a, b) => {
+      const aiRunDelta = Number(isCompletedAiRun(b)) - Number(isCompletedAiRun(a));
+      if (aiRunDelta) return aiRunDelta;
+      return new Date(b.scanned_at ?? 0) - new Date(a.scanned_at ?? 0);
+    });
     return sorted[0]?.scan_id ?? null;
   }, [scanList]);
   const effectiveScanId = selectedScanId ?? latestScanId;
@@ -62,7 +66,7 @@ export default function Dashboard() {
     const dayCounts = countByDay(timelinePoints.map((point) => point.created_at));
     return timelinePoints.map((point) => ({
       date: dayCounts[dateKey(point.created_at)] > 1 ? formatShortDateTime(point.created_at) : formatShortDate(point.created_at),
-      tooltip_label: `${formatDate(point.created_at)} · ${point.run_id ?? "-"}`,
+      tooltip_label: `${formatDate(point.created_at)} - ${point.run_id ?? "-"}`,
       scan_id: point.run_id,
       total: point.metrics?.asset_count ?? 0,
       with_violation: point.metrics?.violated_invariant_count ?? point.metrics?.total_violations ?? 0,
@@ -254,7 +258,13 @@ export default function Dashboard() {
                 )}
 
                 {current.sections.includes("defense") && (
-                  <DefenseSection summary={summary} timeline={securityTimeline} violations={violations} activeScanId={effectiveScanId} scanCoverageMetrics={detail?.scanCoverageMetrics ?? []} />
+                  <DefenseSection
+                    summary={summary}
+                    timeline={securityTimeline}
+                    violations={violations}
+                    invariants={detail?.invariants ?? []}
+                    activeScanId={effectiveScanId}
+                  />
                 )}
               </>
             )}
@@ -401,3 +411,4 @@ function filterCount(active) {
     fontWeight: 700,
   };
 }
+

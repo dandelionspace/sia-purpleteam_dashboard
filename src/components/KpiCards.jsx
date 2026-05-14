@@ -2,11 +2,11 @@ import { buildInvariantJudgmentCounts } from "../utils/invariantJudgment";
 import { sourceMatches } from "../utils/invariantSource";
 
 const KPI_CONFIG = [
+  ["invariant_total", "전체 불변식", "default"],
   ["confirmed_violation_count", "확정 위반", "alert"],
-  ["unverifiable_invariant_count", "검증 불가", "warn"],
-  ["normal_or_not_observed_count", "정상/위반 미관측", "ok"],
-  ["critical_high", "Critical/High 위반", "alert"],
-  ["attack_chains", "공식 공격 체인", "default"],
+  ["unverifiable_invariant_count", "검증 불가", "default"],
+  ["normal_or_not_observed_count", "정상/위반 미관측", "default"],
+  ["critical_high", "Critical/High 위반", "default"],
 ];
 
 export default function KpiCards({
@@ -14,7 +14,6 @@ export default function KpiCards({
   violations = [],
   invariants = [],
   activeFilter = "all",
-  attackChains = [],
 }) {
   const filteredInvariants = activeFilter === "all"
     ? invariants
@@ -34,7 +33,6 @@ export default function KpiCards({
     unverifiable_invariant_count: judgmentCounts.unverifiable,
     normal_or_not_observed_count: judgmentCounts.normalOrNotObserved,
     critical_high: criticalHigh || summary.critical_high || 0,
-    attack_chains: attackChains.length || summary.attack_chains || summary.ai2_chain_scenario_count || 0,
   };
 
   return (
@@ -56,12 +54,6 @@ function uniqueCount(values) {
 function toneStyle(tone) {
   if (tone === "alert") {
     return { card: { background: "#FFF7F7", borderColor: "#FECACA" }, value: { color: "#991B1B" } };
-  }
-  if (tone === "warn") {
-    return { card: { background: "#FFFBEB", borderColor: "#FDE68A" }, value: { color: "#92400E" } };
-  }
-  if (tone === "ok") {
-    return { card: { background: "#F0FDF4", borderColor: "#BBF7D0" }, value: { color: "#166534" } };
   }
   return { card: {}, value: {} };
 }
